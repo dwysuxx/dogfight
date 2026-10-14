@@ -10,6 +10,12 @@ export default [
         requestAnimationFrame: "readonly",
         cancelAnimationFrame: "readonly",
         performance: "readonly",
+        location: "readonly",
+        URLSearchParams: "readonly",
+        console: "readonly",
+        EventTarget: "readonly",
+        Event: "readonly",
+        setTimeout: "readonly",
       },
     },
     rules: {
