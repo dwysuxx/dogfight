@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dogfight — Lab 1</title>
+    <title>Dogfight — Lab 2</title>
     <style>
       html,
       body {
@@ -17,12 +17,43 @@
         width: 100vw;
         height: 100vh;
       }
+      #game-hud {
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        color: #e8f0ff;
+        font:
+          13px/1.5 "Courier New",
+          monospace;
+        background: rgba(0, 0, 0, 0.4);
+        padding: 6px 10px;
+        border-radius: 4px;
+        pointer-events: none;
+        white-space: pre;
+        text-align: right;
+      }
+      #fire {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        padding: 14px 22px;
+        font:
+          bold 14px "Courier New",
+          monospace;
+        color: #05060a;
+        background: #ffd84a;
+        border: 0;
+        border-radius: 8px;
+        opacity: 0.85;
+      }
       #hud {
         position: fixed;
         top: 8px;
         left: 8px;
         color: #7cfc7c;
-        font: 12px/1.4 "Courier New", monospace;
+        font:
+          12px/1.4 "Courier New",
+          monospace;
         background: rgba(0, 0, 0, 0.4);
         padding: 6px 10px;
         border-radius: 4px;
@@ -34,6 +65,8 @@
   <body>
     <canvas id="game"></canvas>
     <div id="hud"></div>
+    <div id="game-hud"></div>
+    <button id="fire" type="button" tabindex="-1">FIRE</button>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>

@@ -1,3 +1,7 @@
+// Device-pixel-ratio-aware canvas setup. Without this, everything drawn is
+// blurry on retina/high-DPI displays: the canvas's backing bitmap must be
+// dpr times larger than its CSS size, then scaled back down via the
+// transform so drawing code can still work in CSS pixels.
 export function setupCanvas(canvas) {
   const ctx = canvas.getContext("2d");
 
