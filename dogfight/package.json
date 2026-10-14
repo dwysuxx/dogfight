@@ -1,0 +1,18 @@
+{
+  "name": "dogfight",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3"
+  }
+}
