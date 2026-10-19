@@ -1,6 +1,7 @@
 import { createAudio } from "./audio.js";
 import { fetchJson, loadAll, withRetry } from "./assets/loader.js";
 import { botControls } from "./ai.js";
+import { GameConnection } from "./connection.js";
 import { createInput, readControls } from "./input.js";
 import { Lobby } from "./lobby/lobby.js";
 import { createLobbyView } from "./lobby/view.js";
@@ -20,6 +21,11 @@ const progressBar = document.getElementById("loading-progress");
 const progressLabel = document.getElementById("loading-percent");
 const retryButton = document.getElementById("retry-loading");
 const backButton = document.getElementById("back-to-lobby");
+const gameChat = document.getElementById("game-chat");
+const chatMessages = document.getElementById("chat-messages");
+const chatInput = document.getElementById("chat-input");
+const roomRoster = document.getElementById("room-roster");
+const leaveGameButton = document.getElementById("leave-game");
 const { ctx, getSize } = setupCanvas(canvas);
 const lobby = new Lobby();
 
@@ -28,6 +34,7 @@ let gameHudView = null;
 let audio = null;
 let loadController = null;
 let selectedJoin = null;
+let gameConnection = null;
 
 function describeError(error) {
   if (error instanceof AggregateError)
@@ -76,6 +83,28 @@ async function startGame({ room, playerName }) {
   }
 
   try {
+    loadingStatus.textContent = "Connecting to the room…";
+    gameConnection?.close();
+    gameConnection = new GameConnection();
+    chatMessages.replaceChildren();
+    gameConnection.on("roster", ({ players }) => {
+      roomRoster.textContent = `Pilots: ${players.map((player) => player.name).join(", ")}`;
+    });
+    gameConnection.on("chat", ({ player, text }) => {
+      const item = document.createElement("li");
+      item.textContent = `${player.name}: ${text}`;
+      chatMessages.append(item);
+      while (chatMessages.children.length > 100) chatMessages.firstElementChild.remove();
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+    gameConnection.on("error", (error) => {
+      roomRoster.textContent = `Connection: ${error.message}`;
+    });
+    gameConnection.on("reconnecting", ({ attempt }) => {
+      roomRoster.textContent = `Reconnecting to room (attempt ${attempt})…`;
+    });
+    await gameConnection.connect({ room: room.id, name: playerName });
+
     const manifest = await withRetry(
       (activeSignal) => fetchJson("/assets/manifest.json", { signal: activeSignal }),
       { signal },
@@ -156,10 +185,36 @@ async function startGame({ room, playerName }) {
 
     loading.hidden = true;
     canvas.hidden = false;
+    gameChat.hidden = false;
+    leaveGameButton.hidden = false;
     loop.start();
   } catch (error) {
     if (signal.aborted) return;
+    gameConnection?.close();
+    gameConnection = null;
     showLoadingError(error);
+  }
+}
+
+async function returnToLobby() {
+  loadController?.abort();
+  loop?.stop();
+  loop = null;
+  gameHudView?.dispose();
+  gameHudView = null;
+  gameConnection?.close();
+  gameConnection = null;
+  gameChat.hidden = true;
+  leaveGameButton.hidden = true;
+  canvas.hidden = true;
+  loading.hidden = true;
+  lobbyView.show();
+  try {
+    await lobby.refresh();
+  } catch (error) {
+    lobbyView.showError(`Could not refresh rooms: ${error.message}`);
+  } finally {
+    lobby.startPolling();
   }
 }
 
@@ -167,17 +222,16 @@ retryButton.addEventListener("click", () => {
   if (selectedJoin) void startGame(selectedJoin);
 });
 backButton.addEventListener("click", () => {
-  loadController?.abort();
-  loading.hidden = true;
-  lobbyView.show();
-  void lobby
-    .refresh()
-    .catch((error) => lobbyView.showError(`Could not refresh rooms: ${error.message}`))
-    .finally(() => lobby.startPolling());
-  if (audio) {
-    void audio.dispose().catch((error) => console.error("Could not close audio:", error));
-    audio = null;
-  }
+  void returnToLobby();
+});
+leaveGameButton.addEventListener("click", () => {
+  void returnToLobby();
+});
+document.getElementById("chat-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text || !gameConnection) return;
+  if (gameConnection.sendChat(text)) chatInput.value = "";
 });
 
 void lobby

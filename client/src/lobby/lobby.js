@@ -28,7 +28,7 @@ export class Lobby extends EventTarget {
   #pollController = null;
   #removeExternalAbort = null;
 
-  constructor({ endpoint = "/api/rooms.json", timeoutMs = 5000, fetchImpl = fetch } = {}) {
+  constructor({ endpoint = "/api/rooms", timeoutMs = 5000, fetchImpl = fetch } = {}) {
     super();
     this.endpoint = endpoint;
     this.timeoutMs = timeoutMs;
@@ -48,6 +48,25 @@ export class Lobby extends EventTarget {
     this.rooms = rooms;
     this.dispatchEvent(makeEvent("roomsChanged", rooms));
     return rooms;
+  }
+
+  async createRoom(name, arena, { signal } = {}) {
+    if (typeof name !== "string" || !name.trim())
+      throw new TypeError("Room name is required");
+    const response = await this.fetchImpl(this.endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), ...(arena ? { arena } : {}) }),
+      signal,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `Could not create room (${response.status})`);
+    }
+    const room = await response.json();
+    await this.refresh({ signal });
+    this.dispatchEvent(makeEvent("roomCreated", room));
+    return room;
   }
 
   join(roomId, playerName = "Pilot") {

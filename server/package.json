@@ -1,0 +1,18 @@
+{
+  "name": "@dogfight/server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=../.env src/index.js",
+    "dev": "node --watch --env-file-if-exists=../.env src/index.js",
+    "test": "node --test",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.9.0"
+  }
+}
