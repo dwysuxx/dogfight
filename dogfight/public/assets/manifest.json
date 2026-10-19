@@ -1,0 +1,24 @@
+{
+  "spritesheet": {
+    "url": "/assets/sprites.svg"
+  },
+  "frames": {
+    "playerShip": [0, 0, 64, 64],
+    "botShip": [64, 0, 64, 64],
+    "bullet": [128, 0, 64, 64],
+    "asteroid": [192, 0, 64, 64],
+    "pickup": [256, 0, 64, 64]
+  },
+  "sounds": {
+    "fired": {
+      "url": "/assets/shot.wav"
+    },
+    "hit": {
+      "url": "/assets/hit.wav"
+    },
+    "exploded": {
+      "url": "/assets/explosion.wav"
+    }
+  },
+  "arena": "/assets/arena.json"
+}

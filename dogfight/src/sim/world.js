@@ -6,7 +6,7 @@ const NO_INPUTS = new Map();
 
 // The entity manager. Entities live in a Map<id, Entity> (not a plain object:
 // numeric keys stay numbers, real .size, insertion order, no inherited keys).
-export class World {
+export class World extends EventTarget {
   #entities = new Map();
   #pending = []; // spawned during a step; added when the step ends
   #timers = [];
@@ -14,6 +14,7 @@ export class World {
   #stepping = false;
 
   constructor({ width = 960, height = 540, seed = 1, collisions = findCollisions } = {}) {
+    super();
     this.bounds = { width, height };
     this.rng = createRng(seed);
     this.collisions = collisions; // swappable: world -> iterable of [a, b]
@@ -23,6 +24,10 @@ export class World {
 
   resize(width, height) {
     this.bounds = { width, height };
+  }
+
+  emit(type, detail) {
+    this.dispatchEvent(new CustomEvent(type, { detail }));
   }
 
   spawn(entity) {

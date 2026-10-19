@@ -10,8 +10,10 @@ const RESPAWN_DELAY = 2; // seconds
 const handlers = {
   "bullet:asteroid"(bullet, asteroid, world) {
     bullet.alive = false;
+    world.emit("hit", { bullet, target: asteroid });
     if (asteroid.takeDamage(bullet.damage)) {
       asteroid.alive = false;
+      world.emit("exploded", { entity: asteroid });
       world.spawn(
         new Explosion({
           pos: asteroid.pos,
@@ -21,13 +23,17 @@ const handlers = {
           color: "#c9b79c",
         }),
       );
-      if (bullet.owner) bullet.owner.score += POINTS.asteroid;
+      if (bullet.owner) {
+        bullet.owner.score += POINTS.asteroid;
+        world.emit("scoreChanged", { ship: bullet.owner, score: bullet.owner.score });
+      }
     }
   },
 
   "bullet:ship"(bullet, ship, world) {
     if (bullet.owner === ship) return; // never hit yourself
     bullet.alive = false;
+    world.emit("hit", { bullet, target: ship });
     if (ship.takeDamage(bullet.damage)) destroyShip(world, ship, bullet.owner);
   },
 
@@ -41,6 +47,7 @@ const handlers = {
     if (ship.contactCooldown <= 0) {
       ship.contactCooldown = 0.8;
       ship.vel = ship.vel.add(normal.scale(140));
+      world.emit("hit", { target: ship, source: asteroid });
       if (ship.takeDamage(CONTACT_DAMAGE)) destroyShip(world, ship, null);
     }
   },
@@ -60,6 +67,7 @@ export function resolveCollision(a, b, world) {
 
 export function destroyShip(world, ship, killer) {
   ship.alive = false;
+  world.emit("exploded", { entity: ship });
   world.spawn(
     new Explosion({
       pos: ship.pos,
@@ -69,10 +77,14 @@ export function destroyShip(world, ship, killer) {
       color: ship.color,
     }),
   );
-  if (killer && killer !== ship) killer.score += POINTS.ship;
+  if (killer && killer !== ship) {
+    killer.score += POINTS.ship;
+    world.emit("scoreChanged", { ship: killer, score: killer.score });
+  }
   world.schedule(RESPAWN_DELAY, () => {
     ship.respawn(findSafeSpot(world, ship));
     world.spawn(ship);
+    world.emit("respawned", { ship });
   });
 }
 

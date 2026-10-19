@@ -3,8 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dogfight — Lab 2</title>
+    <title>Dogfight — Lab 3</title>
     <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Courier New", monospace;
+        color: #e8f0ff;
+        background: #05060a;
+      }
       html,
       body {
         margin: 0;
@@ -17,14 +23,70 @@
         width: 100vw;
         height: 100vh;
       }
+      canvas[hidden] {
+        display: none;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      #lobby,
+      #loading {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-content: center;
+        gap: 12px;
+        background: rgba(5, 6, 10, 0.96);
+        z-index: 2;
+      }
+      #lobby {
+        width: min(460px, calc(100vw - 48px));
+        margin: auto;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #loading {
+        text-align: center;
+      }
+      #lobby h1 {
+        margin: 0;
+        color: #ffd84a;
+      }
+      #lobby form {
+        display: grid;
+        gap: 12px;
+      }
+      #lobby label {
+        line-height: 1.8;
+      }
+      #lobby input,
+      #lobby button,
+      #loading button {
+        padding: 8px 12px;
+        font: inherit;
+      }
+      #lobby fieldset {
+        border: 1px solid #53617a;
+      }
+      #lobby button,
+      #loading button {
+        color: #05060a;
+        background: #ffd84a;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #loading-progress {
+        width: min(360px, 75vw);
+        height: 18px;
+        accent-color: #ffd84a;
+      }
       #game-hud {
         position: fixed;
         top: 8px;
         right: 8px;
         color: #e8f0ff;
-        font:
-          13px/1.5 "Courier New",
-          monospace;
+        font: 13px/1.5 "Courier New", monospace;
         background: rgba(0, 0, 0, 0.4);
         padding: 6px 10px;
         border-radius: 4px;
@@ -32,28 +94,12 @@
         white-space: pre;
         text-align: right;
       }
-      #fire {
-        position: fixed;
-        right: 16px;
-        bottom: 16px;
-        padding: 14px 22px;
-        font:
-          bold 14px "Courier New",
-          monospace;
-        color: #05060a;
-        background: #ffd84a;
-        border: 0;
-        border-radius: 8px;
-        opacity: 0.85;
-      }
       #hud {
         position: fixed;
         top: 8px;
         left: 8px;
         color: #7cfc7c;
-        font:
-          12px/1.4 "Courier New",
-          monospace;
+        font: 12px/1.4 "Courier New", monospace;
         background: rgba(0, 0, 0, 0.4);
         padding: 6px 10px;
         border-radius: 4px;
@@ -63,10 +109,19 @@
     </style>
   </head>
   <body>
-    <canvas id="game"></canvas>
+    <canvas id="game" hidden></canvas>
     <div id="hud"></div>
     <div id="game-hud"></div>
-    <button id="fire" type="button" tabindex="-1">FIRE</button>
+    <section id="lobby" aria-label="Game lobby"></section>
+    <section id="loading" aria-live="polite" hidden>
+      <strong id="loading-status">Preparing game…</strong>
+      <progress id="loading-progress" max="1" value="0"></progress>
+      <span id="loading-percent">0%</span>
+      <div>
+        <button id="retry-loading" type="button" hidden>Retry loading</button>
+        <button id="back-to-lobby" type="button" hidden>Back to lobby</button>
+      </div>
+    </section>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>

@@ -90,7 +90,9 @@ export class Ship extends Entity {
         turnRate: 3.2,
       });
     }
-    return this.world.spawn(bullet);
+    const spawned = this.world.spawn(bullet);
+    this.world.emit("fired", { ship: this, bullet });
+    return spawned;
   }
 
   update(dt) {

@@ -1,25 +1,78 @@
-# Dogfight — Лабораторна 2: об'єкти, `this`, класи, композиція
+# Dogfight — Лабораторна 3: асинхронний JavaScript
 
-Продовження [лаби 1](docs/lab-01.md) (фіксований крок, інтерполяція, замикання для вводу). Тепер світ складається з **сутностей** (`Entity`): корабель, кулі, астероїди, підбирайки, вибухи. Вони живуть у `World` на базі `Map`, стріляють, стикаються, завдають шкоди і відроджуються.
+Лабораторна продовжує [лабу 1](docs/lab-01.md) та симуляцію з лабораторної 2. До гри додано конвеєр ресурсів із прогресом, екран lobby з оновленням через HTTP, Web Audio та події, що не зв'язують симуляцію з UI.
 
 ## Запуск
 
 ```bash
 npm install
 npm run dev      # Vite
-npm test         # 16 автотестів симуляції (node --test, без браузера)
+npm test         # тести симуляції та async-поведінки (node --test)
 npm run lint
 ```
 
-Без Node.js: розширення VS Code *Live Server* → `index.html` → *Open with Live Server*. Відкривати `index.html` через `file://` не можна (ES-модулі).
+Потрібен Node.js 22. Не відкривайте `index.html` через `file://`: ES-модулі та Vite `public/`-ресурси потребують HTTP-сервера.
 
-Керування: **← → / A D** — поворот, **↑ / W** — тяга, **Space** (або кнопка FIRE) — вогонь, **P** — пауза. Опонент — простий бот (червоний корабель). `?seed=42` в адресі відтворює те саме поле астероїдів.
+Спершу відкривається lobby зі статичним Vite endpoint `/api/rooms.json`; оберіть пілота й кімнату. Після приєднання ресурси завантажуються паралельно, і гра починається після завершення критичних завантажень. Керування: **← → / A D** — поворот, **↑ / W** — тяга, **Space** — вогонь, **P** — пауза. `?seed=42` відтворює те саме поле астероїдів.
+
+## Асинхронні можливості (Лабораторна 3)
+
+- `src/assets/loader.js` містить `loadImage`, `loadAudio`, `fetchJson`, `withRetry` і `loadAll`. Завантаження йдуть паралельно; кожен ресурс рухає індикатор прогресу. Критичні спрайт-лист і конфігурація арени мають кнопку повтору при помилці; несправність необов'язкового звуку показується в консолі, але не блокує гру. Повторні спроби використовують експоненційну затримку з jitter і не повторюють 4xx/пошкоджений JSON.
+- `public/assets/manifest.json` описує sprite atlas, кадри, звукові ефекти та JSON арени. Малювання бере кораблі, кулі, астероїди й підбирайки з atlas; при завантаженні ізольованого кадру без atlas збережений векторний fallback.
+- `src/audio.js` володіє `AudioContext`, декодує WAV під час екрана завантаження та відновлює контекст після жесту гравця. `World` є `EventTarget` і надсилає `fired`, `hit`, `exploded`, `scoreChanged` та `respawned`; аудіо та `src/render/hud.js` підписуються незалежно. Модулі симуляції не імпортують UI або звук.
+- `src/lobby/lobby.js` отримує список кімнат, має тайм-аут кожного запиту й періодичне оновлення. Перехід у гру скасовує опитування; рендеринг імені, кімнат і помилок відокремлено в `src/lobby/view.js`.
+- Перевірки асинхронних помилок: `test/async.test.js` покриває 404 без повтору, тимчасовий 503, некоректний JSON, пропущений необов'язковий звук, критичну помилку ресурсу, timeout lobby та скасування запиту.
+
+### Послідовно чи паралельно
+
+Цей фрагмент можна виконати в консолі браузера, щоб порівняти два запити однакової тривалості:
+
+```js
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function sequential() {
+  const start = performance.now();
+  await wait(400);
+  await wait(400);
+  return performance.now() - start;
+}
+async function parallel() {
+  const start = performance.now();
+  await Promise.all([wait(400), wait(400)]);
+  return performance.now() - start;
+}
+console.table({ sequential: await sequential(), parallel: await parallel() });
+```
+
+Очікуваний порядок величин: послідовно ≈ 800 мс, паралельно ≈ 400 мс (фактичні таймери браузера додають похибку). `loadAll` запускає всі ресурси до очікування результату; заміна на послідовні `await` прибирає це перекриття.
+
+### Мікрозадачі: п'ять прогнозів
+
+1. `console.log("A"); Promise.resolve().then(() => console.log("B")); console.log("C");` → `A, C, B`: синхронний стек завершується до реакції проміса.
+2. `async function f() { console.log("A"); await null; console.log("C"); } f(); console.log("B");` → `A, B, C`: навіть `await null` ставить продовження в чергу мікрозадач.
+3. `Promise.resolve().then(() => { console.log("then"); setTimeout(() => console.log("timer"), 0); }); Promise.resolve().then(() => console.log("micro"));` → `then, micro, timer`: таймер не перериває спорожнення черги мікрозадач.
+4. `Promise.resolve().then(() => { console.log("first"); requestAnimationFrame(() => console.log("frame")); }); Promise.resolve().then(() => console.log("second"));` → `first, second, frame`: callback кадру виконається під час наступного малювання, після поточної черги мікрозадач.
+5. `requestAnimationFrame(() => { console.log("frame"); Promise.resolve().then(() => console.log("frame micro")); }); Promise.resolve().then(() => console.log("micro"));` → `micro, frame, frame micro`: мікрозадача з головного стека йде першою; реакція, створена в callback кадру, завершується перед наступною задачею.
+
+### Галерея відмов і відновлення
+
+| Сценарій | Спостережуваний результат | Відновлення |
+|---|---|---|
+| Відсутній спрайт (404) | ресурс позначається невдалим після однієї спроби; прогрес доходить до кінця | критичний atlas показує повідомлення та **Retry loading** / **Back to lobby** |
+| HTTP timeout у lobby | `AbortSignal.timeout` завершує запит, помилка показується в статусі lobby | автоматичне періодичне оновлення або кнопка **Refresh** |
+| Переривання завантаження | `AbortController` завершує активний fetch/decode; відхилення не лишається необробленим | **Back to lobby** скасовує завантаження, lobby запускає нове опитування |
+| Пошкоджений JSON | `fetchJson` повертає явну помилку; JSON не повторюється як тимчасовий збій | критична конфігурація показує **Retry loading** / **Back to lobby** |
+| Звук відсутній або не декодується | помилка необов'язкового ресурсу виводиться в консоль, прогрес триває | гра запускається без цього звуку |
+
+Автоматизовані приклади для 404, пошкодженого JSON, timeout і скасування запиту містяться у `test/async.test.js`; у браузері 404 atlas та пошкоджений JSON можна перевірити через DevTools → Network → **Block request URL** і **Local Overrides** відповідно.
 
 ## Структура
 
 ```
 src/
   main.js, loop.js, input.js        # цикл і ввід з лаби 1 (+ readControls)
+  assets/loader.js                  # прогресивне завантаження, retry, abort
+  lobby/                            # HTTP-модель кімнат і окремий DOM-рендерер
+  audio.js, render/hud.js           # сповіщення через World EventTarget
   ai.js                             # бот: повертає ті самі controls, що й клавіатура
   sim/                              # чиста симуляція, жодного DOM/canvas
     vector.js                       # Vector2 (чисті методи + *InPlace)
@@ -32,9 +85,13 @@ src/
     spawner.js, game.js, rng.js, math.js
   render/                           # canvas, drawEntity (інтерполяція для всіх)
   demo/this-bug.js                  # запускна демонстрація помилки з this
-test/sim.test.js
+test/sim.test.js, test/async.test.js
 docs/lab-01.md                      # README лаби 1 з експериментами
 ```
+
+## Лабораторна 2 — основи симуляції
+
+Наступні розділи зберігають попередню документацію про модель об'єктів та симуляцію.
 
 ## Що зроблено за віхами
 
@@ -140,7 +197,7 @@ m.get(1);        // "x"
 - [x] Самонаведення й підбирайки через композицію; нотатка про дизайн у README.
 - [ ] Тег `lab-02` (команди нижче).
 
-## Git
+## Git (історичні команди лабораторної 2)
 
 ```bash
 git switch -c lab2
