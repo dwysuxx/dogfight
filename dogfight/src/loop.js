@@ -1,3 +1,7 @@
+// The game loop: a fixed-timestep simulation driven by requestAnimationFrame.
+// See Glenn Fiedler's "Fix Your Timestep!" — this is that pattern, with
+// stats bookkeeping (steps/s, frames/s, frame time) added for the HUD.
+
 export function createLoop({ step = 1 / 60, simulate, render, onStats } = {}) {
   let accumulator = 0;
   let last = null;
@@ -16,19 +20,26 @@ export function createLoop({ step = 1 / 60, simulate, render, onStats } = {}) {
     if (!running) return;
 
     if (last === null) last = now;
-    const rawDelta = (now - last) / 1000; 
+    const rawDelta = (now - last) / 1000; // seconds, unclamped
     last = now;
-    lastFrameDuration = rawDelta * 1000; 
+    lastFrameDuration = rawDelta * 1000; // ms, for the HUD — shows real jank
 
+    // Clamp the delta fed into the accumulator. Without this, a single long
+    // hitch (tab switch, GC pause, a breakpoint) would force the while-loop
+    // below to run hundreds of simulate() calls in a row trying to catch
+    // up — the "spiral of death". Capping at 0.25s means the simulation
+    // will look like it briefly paused rather than exploding.
     const delta = Math.min(rawDelta, 0.25);
     accumulator += delta;
 
     while (accumulator >= step) {
-      simulate(step); 
+      simulate(step); // always the same dt: deterministic physics
       accumulator -= step;
       stepsThisSecond++;
     }
 
+    // Whatever fraction of a step is left over is how far between the
+    // previous and current simulation state we are, visually.
     const alpha = accumulator / step; // in [0, 1)
     render(alpha);
     framesThisSecond++;
