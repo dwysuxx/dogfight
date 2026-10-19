@@ -4,7 +4,7 @@ import { Ship } from "../sim/ship.js";
 
 // Every entity is drawn at lerp(previous, current, alpha) — the Lab 1
 // interpolation, now applied to all of them (angle via the shortest path).
-export function drawEntity(ctx, e, alpha) {
+export function drawEntity(ctx, e, alpha, assets) {
   if (e.kind === "explosion") return drawExplosion(ctx, e);
 
   const x = lerp(e.prevPos.x, e.pos.x, alpha);
@@ -14,19 +14,39 @@ export function drawEntity(ctx, e, alpha) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  switch (e.kind) {
-    case "ship":
-      drawShip(ctx, e);
-      break;
-    case "bullet":
-      drawBullet(ctx, e);
-      break;
-    case "asteroid":
-      drawAsteroid(ctx, e);
-      break;
-    case "pickup":
-      drawPickup(ctx, e);
-      break;
+  const frameName =
+    e.kind === "ship"
+      ? e.name === "bot"
+        ? "botShip"
+        : "playerShip"
+      : e.kind;
+  const frame = assets?.frames?.[frameName];
+  if (assets?.spritesheet && frame) {
+    const size = e.kind === "ship" ? 34 : e.kind === "asteroid" ? e.radius * 2.2 : e.radius * 2.8;
+    ctx.drawImage(
+      assets.spritesheet,
+      ...frame,
+      -size / 2,
+      -size / 2,
+      size,
+      size,
+    );
+    if (e.kind === "ship") drawShield(ctx, e);
+  } else {
+    switch (e.kind) {
+      case "ship":
+        drawShip(ctx, e);
+        break;
+      case "bullet":
+        drawBullet(ctx, e);
+        break;
+      case "asteroid":
+        drawAsteroid(ctx, e);
+        break;
+      case "pickup":
+        drawPickup(ctx, e);
+        break;
+    }
   }
   ctx.restore();
 }
@@ -54,6 +74,10 @@ function drawShip(ctx, ship) {
     ctx.fill();
   }
 
+  drawShield(ctx, ship);
+}
+
+function drawShield(ctx, ship) {
   const shield = ship.effects.get("shield");
   if (
     shield !== undefined &&

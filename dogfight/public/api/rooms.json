@@ -1,0 +1,26 @@
+{
+  "rooms": [
+    {
+      "id": "orbit",
+      "name": "Orbit",
+      "players": 1,
+      "capacity": 4,
+      "arena": {
+        "width": 960,
+        "height": 540,
+        "asteroids": 6
+      }
+    },
+    {
+      "id": "deep-field",
+      "name": "Deep Field",
+      "players": 2,
+      "capacity": 6,
+      "arena": {
+        "width": 1280,
+        "height": 720,
+        "asteroids": 10
+      }
+    }
+  ]
+}
