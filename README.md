@@ -1,209 +1,120 @@
-# Dogfight — Лабораторна 3: асинхронний JavaScript
+# Dogfight — Лабораторна 4: Node.js, WebSocket і потоки
 
-Лабораторна продовжує [лабу 1](docs/lab-01.md) та симуляцію з лабораторної 2. До гри додано конвеєр ресурсів із прогресом, екран lobby з оновленням через HTTP, Web Audio та події, що не зв'язують симуляцію з UI.
+Лаба продовжує браузерну гру з [лаби 3](https://github.com/dwysuxx/dogfight/tree/lab03) і переносить lobby на справжній Node.js HTTP/WebSocket сервер. Сервер керує кімнатами та чатом, а файлові журнали пише й віддає потоками з backpressure. Стан симуляції не синхронізується між клієнтами: це тема лабораторної 5.
 
-## Запуск
+## Вимоги й запуск
 
-```bash
-npm install
-npm run dev      # Vite
-npm test         # тести симуляції та async-поведінки (node --test)
-npm run lint
+Потрібен Node.js 22 або новіший.
+
+```powershell
+npm ci
+Copy-Item .env.example .env   # необов'язково: значення за замовчуванням уже працюють
+npm run build
+npm start
 ```
 
-Потрібен Node.js 22. Не відкривайте `index.html` через `file://`: ES-модулі та Vite `public/`-ресурси потребують HTTP-сервера.
+Відкрийте `http://127.0.0.1:3000`. Для розробки запустіть у двох терміналах `npm run dev` (Node API/WebSocket) і `npm run dev:client` (Vite, за замовчуванням `http://localhost:5173`). Vite проксить `/api` і `/ws` на сервер.
 
-Спершу відкривається lobby зі статичним Vite endpoint `/api/rooms.json`; оберіть пілота й кімнату. Після приєднання ресурси завантажуються паралельно, і гра починається після завершення критичних завантажень. Керування: **← → / A D** — поворот, **↑ / W** — тяга, **Space** — вогонь, **P** — пауза. `?seed=42` відтворює те саме поле астероїдів.
-
-## Асинхронні можливості (Лабораторна 3)
-
-- `src/assets/loader.js` містить `loadImage`, `loadAudio`, `fetchJson`, `withRetry` і `loadAll`. Завантаження йдуть паралельно; кожен ресурс рухає індикатор прогресу. Критичні спрайт-лист і конфігурація арени мають кнопку повтору при помилці; несправність необов'язкового звуку показується в консолі, але не блокує гру. Повторні спроби використовують експоненційну затримку з jitter і не повторюють 4xx/пошкоджений JSON.
-- `public/assets/manifest.json` описує sprite atlas, кадри, звукові ефекти та JSON арени. Малювання бере кораблі, кулі, астероїди й підбирайки з atlas; при завантаженні ізольованого кадру без atlas збережений векторний fallback.
-- `src/audio.js` володіє `AudioContext`, декодує WAV під час екрана завантаження та відновлює контекст після жесту гравця. `World` є `EventTarget` і надсилає `fired`, `hit`, `exploded`, `scoreChanged` та `respawned`; аудіо та `src/render/hud.js` підписуються незалежно. Модулі симуляції не імпортують UI або звук.
-- `src/lobby/lobby.js` отримує список кімнат, має тайм-аут кожного запиту й періодичне оновлення. Перехід у гру скасовує опитування; рендеринг імені, кімнат і помилок відокремлено в `src/lobby/view.js`.
-- Перевірки асинхронних помилок: `test/async.test.js` покриває 404 без повтору, тимчасовий 503, некоректний JSON, пропущений необов'язковий звук, критичну помилку ресурсу, timeout lobby та скасування запиту.
-
-### Послідовно чи паралельно
-
-Цей фрагмент можна виконати в консолі браузера, щоб порівняти два запити однакової тривалості:
-
-```js
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-async function sequential() {
-  const start = performance.now();
-  await wait(400);
-  await wait(400);
-  return performance.now() - start;
-}
-async function parallel() {
-  const start = performance.now();
-  await Promise.all([wait(400), wait(400)]);
-  return performance.now() - start;
-}
-console.table({ sequential: await sequential(), parallel: await parallel() });
-```
-
-Очікуваний порядок величин: послідовно ≈ 800 мс, паралельно ≈ 400 мс (фактичні таймери браузера додають похибку). `loadAll` запускає всі ресурси до очікування результату; заміна на послідовні `await` прибирає це перекриття.
-
-### Мікрозадачі: п'ять прогнозів
-
-1. `console.log("A"); Promise.resolve().then(() => console.log("B")); console.log("C");` → `A, C, B`: синхронний стек завершується до реакції проміса.
-2. `async function f() { console.log("A"); await null; console.log("C"); } f(); console.log("B");` → `A, B, C`: навіть `await null` ставить продовження в чергу мікрозадач.
-3. `Promise.resolve().then(() => { console.log("then"); setTimeout(() => console.log("timer"), 0); }); Promise.resolve().then(() => console.log("micro"));` → `then, micro, timer`: таймер не перериває спорожнення черги мікрозадач.
-4. `Promise.resolve().then(() => { console.log("first"); requestAnimationFrame(() => console.log("frame")); }); Promise.resolve().then(() => console.log("second"));` → `first, second, frame`: callback кадру виконається під час наступного малювання, після поточної черги мікрозадач.
-5. `requestAnimationFrame(() => { console.log("frame"); Promise.resolve().then(() => console.log("frame micro")); }); Promise.resolve().then(() => console.log("micro"));` → `micro, frame, frame micro`: мікрозадача з головного стека йде першою; реакція, створена в callback кадру, завершується перед наступною задачею.
-
-### Галерея відмов і відновлення
-
-| Сценарій | Спостережуваний результат | Відновлення |
-|---|---|---|
-| Відсутній спрайт (404) | ресурс позначається невдалим після однієї спроби; прогрес доходить до кінця | критичний atlas показує повідомлення та **Retry loading** / **Back to lobby** |
-| HTTP timeout у lobby | `AbortSignal.timeout` завершує запит, помилка показується в статусі lobby | автоматичне періодичне оновлення або кнопка **Refresh** |
-| Переривання завантаження | `AbortController` завершує активний fetch/decode; відхилення не лишається необробленим | **Back to lobby** скасовує завантаження, lobby запускає нове опитування |
-| Пошкоджений JSON | `fetchJson` повертає явну помилку; JSON не повторюється як тимчасовий збій | критична конфігурація показує **Retry loading** / **Back to lobby** |
-| Звук відсутній або не декодується | помилка необов'язкового ресурсу виводиться в консоль, прогрес триває | гра запускається без цього звуку |
-
-Автоматизовані приклади для 404, пошкодженого JSON, timeout і скасування запиту містяться у `test/async.test.js`; у браузері 404 atlas та пошкоджений JSON можна перевірити через DevTools → Network → **Block request URL** і **Local Overrides** відповідно.
+`npm test` запускає тести клієнта й сервера; `npm run lint` перевіряє обидва пакети; `npm run build` збирає браузерний клієнт у `client/dist`. Конфігурація: `HOST`, `PORT`, `LOG_DIR`, `MAX_ROOMS`, `MAX_PLAYERS_PER_ROOM`, `MAX_PAYLOAD`, `MAX_MESSAGES_PER_SECOND`, `SLOW_CLIENT_BYTES`, `JOIN_TIMEOUT_MS`, `HEARTBEAT_MS`. Значення перевіряються при старті. `Ctrl+C` або `SIGTERM` зупиняє приймання з'єднань, закриває WebSocket і дописує журнали.
 
 ## Структура
 
-```
-src/
-  main.js, loop.js, input.js        # цикл і ввід з лаби 1 (+ readControls)
-  assets/loader.js                  # прогресивне завантаження, retry, abort
-  lobby/                            # HTTP-модель кімнат і окремий DOM-рендерер
-  audio.js, render/hud.js           # сповіщення через World EventTarget
-  ai.js                             # бот: повертає ті самі controls, що й клавіатура
-  sim/                              # чиста симуляція, жодного DOM/canvas
-    vector.js                       # Vector2 (чисті методи + *InPlace)
-    entity.js                       # базовий Entity (рівно 1 рівень успадкування)
-    ship.js  bullet.js  asteroid.js  pickup.js  explosion.js
-    behaviors.js                    # композиція: homing як дані + mixin withHoming
-    world.js                        # Map-сховище, ітератор, *ofKind, відкладений despawn
-    collision.js                    # система колізій: world -> пари (a, b)
-    rules.js                        # що стається при зіткненні: шкода, бали, респавн
-    spawner.js, game.js, rng.js, math.js
-  render/                           # canvas, drawEntity (інтерполяція для всіх)
-  demo/this-bug.js                  # запускна демонстрація помилки з this
-test/sim.test.js, test/async.test.js
-docs/lab-01.md                      # README лаби 1 з експериментами
+```text
+client/                       Vite-клієнт із попередніх лабораторних
+  src/connection.js           WebSocket: черга, join, reconnect із backoff
+  src/lobby/                  HTTP lobby та незалежний DOM-рендеринг
+  vite.config.js              dev proxy /api і /ws
+server/
+  src/index.js                запуск, конфігурація, graceful shutdown
+  src/config.js               перевірка environment
+  src/http.js                 node:http, API і безпечна роздача dist
+  src/protocol.js             версія 0 JSON-протоколу і валідація
+  src/rooms.js                Room/RoomManager на EventEmitter
+  src/ws.js                   lifecycle, heartbeat, rate і slow-client policy
+  src/log/matchlog.js         object-mode Transform і pipeline до NDJSON
+  src/log/replay.js           async iterator для incremental replay
+  src/log/benchmark.js        200 MiB throttled-stream RSS benchmark
+server/test/                  node:test: HTTP, WebSocket, rooms, replay
 ```
 
-## Лабораторна 2 — основи симуляції
+Кореневий `package.json` оголошує npm workspaces `client` і `server`; код використовує ESM та `node:`-префікси для вбудованих модулів.
 
-Наступні розділи зберігають попередню документацію про модель об'єктів та симуляцію.
+## HTTP, кімнати та протокол
 
-## Що зроблено за віхами
+- `GET /health` — статус процесу; `GET /api/rooms` — кімнати, місткість і конфігурація арени; `POST /api/rooms` — створює кімнату з JSON `{ "name": "Practice", "arena": { "width": 960, "height": 540, "asteroids": 6 } }`. Тіло має обмеження `MAX_PAYLOAD`; некоректні запити отримують 4xx.
+- У production `node:http` роздає `client/dist` із MIME-типами, `realpath`-перевіркою symlink і захистом від path traversal. `/api/replays/:id` — окремий маршрут для журналів, а невідомий `/api/...` не маскується SPA fallback-ом.
+- `Room extends EventEmitter`: `join`, `leave`, `chat`, `empty` і структуровані `event` для журналу. `RoomManager` лімітує кількість кімнат/гравців та видаляє кімнату після виходу останнього гравця.
+- WebSocket endpoint: `/ws`. Усі вхідні повідомлення — JSON з `v: 0`: `{ "v": 0, "type": "join", "room": "orbit", "name": "Ada" }` або `{ "v": 0, "type": "chat", "text": "Hi!" }`. Сервер перевіряє версію, тип, форму, додаткові поля та довжину рядків; oversize frame закривається `1009`, порушення протоколу — `1002`/`1008`.
+- Клієнт має надіслати `join` за 5 секунд. Сервер повертає `joined`, оновлює `roster` і ретранслює чат. Ping/pong перевіряє живість сокетів; token bucket обмежує повідомлення, а повільному клієнту не відправляється chat при переповненому `bufferedAmount` (для критичного roster з'єднання закривається).
+- `client/src/connection.js` повторно підключається з експоненційною затримкою, повторює join та тримає обмежену чергу повідомлень під час `CONNECTING`.
 
-- **M1.** `Vector2` — методи `add, sub, scale, length, normalize, rotate, dot`, статичний `fromAngle`; усі повертають *нові* вектори, а для гарячих шляхів є `addInPlace`, `addScaledInPlace`, `scaleInPlace`. `Entity` має `id`, `pos`, `vel`, `angle`, `radius`, `alive`, `kind`, `update(dt)`; лічильник id — приватне статичне поле `static #nextId`. Корабель із лаби 1 переписано в `class Ship extends Entity`.
-- **M2.** `World` тримає `#entities: Map<id, Entity>` з `spawn`, `despawn` (відкладений: лише `alive = false`, прибирання в кінці кроку), `get`, `[Symbol.iterator]` і генератор `*ofKind(kind)`. `World.step(dt, inputs)` оновлює все, розв'язує колізії, запускає системи й підмітає мертвих. `Bullet` має `ttl`, `Asteroid` дрейфує й відбивається від країв. Спавн у середині кроку теж відкладений: Map не росте, поки по ньому ітерують.
-- **M3.** Колізії — окрема система `findCollisions(world)`: ґенератор пар кіл (O(n²), Лаба 7 це заміряє). Її можна замінити на просторову хеш-таблицю: `World` приймає будь-яку функцію `world -> пари`. Шкода і наслідки живуть у `rules.js`, таблиця обробників за ключем `"bullet:asteroid"`. У `Ship` є приватне `#hp` і публічний `get hp()`. Знищений корабель дає `Explosion` (частинки), респавн через 2 с у «безпечному місці» (максимальний відступ від астероїдів і суперників), 2 с щита після відродження. Рахунок у HUD.
-- **M4.** Дві фічі, яких ієрархія не витримала б, зроблено композицією (див. розділ нижче).
+Перевірка вручну: запустіть сервер та дві вкладки, введіть різні імена, приєднайтесь до однієї кімнати й надішліть чат. Обидві вкладки отримають той самий roster і повідомлення. Для API можна використати `curl.exe http://127.0.0.1:3000/api/rooms` та POST з JSON body.
 
-## Помилка з `this`
+## Match logs, streams і backpressure
 
-Типова помилка (проявляється, коли вішаєш `fire` на кнопку):
+Кожна кімната пише події в `server/logs/<room>-<timestamp>-<id>.ndjson`. `MatchLogTransform` працює в object mode і перетворює події в NDJSON; `pipeline` передає їх до `createWriteStream`, поширює помилки та застосовує backpressure до файлового writable. Оскільки `EventEmitter.emit()` синхронний і не вміє чекати `drain`, адаптер призупиняє подачу в stream та тримає не більше 4096 pending events; якщо черга переповниться, log pipeline завершується явною помилкою замість необмеженого росту RAM.
+
+`GET /api/replays` повертає список, `GET /api/replays/:id` передає файл через `pipeline(createReadStream, response)` — replay не завантажується цілком у пам'ять. `server/src/log/replay.js` також читає NDJSON рядок за рядком через async iterator.
+
+Щоб відтворити вимірювання потоку приблизно 200 MiB у slow consumer і згенерувати графік:
+
+```powershell
+npm run benchmark
+```
+
+Скрипт створює тимчасовий NDJSON replay потоком, віддає його локальному HTTP-клієнту зі штучним throttling, знімає `process.memoryUsage().rss` кожні 100 мс, зберігає графік у [server/docs/backpressure-rss.svg](server/docs/backpressure-rss.svg) і видаляє тимчасовий replay. Розмір receive buffer — 64 KiB. Обсяг фактичних байтів і RSS min/max друкуються в консолі; результат залежить від ОС і машини.
+
+![RSS під час throttled replay](server/docs/backpressure-rss.svg)
+
+`writable.write(chunk) === false` означає, що writable досяг high-water mark: це сигнал припинити подачу до `drain`, а не помилка запису. `pipeline` з'єднує readable, transform і writable та координує backpressure й cleanup; цикл, що ігнорує false, накопичує буфери в RAM. TCP і WebSocket мають ту саму проблему повільного споживача: вимірюйте `bufferedAmount`, обмежуйте чергу, відкидайте необов'язкові дані або закривайте з'єднання.
+
+## Event loop: блокування та обробка помилок
+
+libuv проходить фази timers → pending callbacks → poll (I/O) → check (`setImmediate`) → close callbacks; між callback-ами Node спорожнює чергу `process.nextTick`, потім promise microtasks. У головному модулі порядок `setTimeout(fn, 0)` та `setImmediate(fn)` може відрізнятися залежно від часу входу в loop; всередині I/O callback `setImmediate` виконується у check-фазі перед наступним timers. `process.nextTick` не є фазою і здатний голодувати I/O, якщо безмежно додавати callback-и.
+
+JavaScript у процесі виконується одним потоком. Для демонстрації запустіть дві вкладки в одній кімнаті та:
+
+1. У першій викличте `fetch("/api/slow?ms=300")` із DevTools або відкрийте URL окремо.
+2. Одразу надішліть chat у другій вкладці.
+3. Chat з'явиться після завершення повного синхронного циклу на 300 мс — один handler затримав HTTP, WebSocket, таймери та всіх інших клієнтів.
+
+`/api/slow` навмисно блокує event loop лише для цього локального досліду; параметр обмежений 1–1000 мс і не використовується грою. У нормальному handler-і треба ділити CPU-роботу на порції або віддати її worker thread, а I/O — очікувати асинхронно.
+
+Події `EventEmitter` викликають слухачів синхронно у порядку підписки. `error` без слухача спеціально кидає виняток і завершує процес; тому HTTP/WebSocket/room/log emitters мають явно обробляти помилки. Аналогічно не можна губити rejected promise: Node за типовою конфігурацією перетворює необроблений rejection на помилку процесу.
+
+```text
+$ node --input-type=module -e "Promise.reject(new Error('disk failed'))"
+node:internal/process/promises:...
+Error: disk failed
+```
+
+Для серверного коду перехоплюйте відому операцію (`try/catch` або `.catch`) і логгуйте контекст; глобальний `unhandledRejection` у `server/src/index.js` — лише остання лінія оборони, що ініціює shutdown, а не спосіб приховати помилку.
+
+## Node REPL експерименти
 
 ```js
-fireButton.addEventListener("click", player.fire);   // передано функцію, а не виклик
+import { EventEmitter } from "node:events";
+import { Readable, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+
+console.log(Buffer.from("привіт").length, "привіт".length); // bytes vs UTF-16 code units
+console.log(Buffer.from([0xff, 0x00]).readUInt16BE(0)); // 65280
+
+const source = Readable.from((function* () {
+  for (let i = 0; i < 100; i++) yield Buffer.alloc(64 * 1024);
+})());
+const slow = new Writable({
+  write(_chunk, _encoding, callback) { setTimeout(callback, 10); },
+});
+await pipeline(source, slow);
+
+const emitter = new EventEmitter();
+emitter.on("error", (error) => console.error("handled:", error.message));
+emitter.emit("error", new Error("disk unavailable"));
 ```
 
-Система подій викликає її як окрему функцію, `this` = елемент (кнопка) або `undefined`. У моєму `Ship.fire()` перша ж перевірка `this.alive` стає `undefined`, функція мовчки повертає `null` і **нічого не відбувається**. Це відтворює `node src/demo/this-bug.js`:
+CommonJS (`require`, `module.exports`) і ESM (`import`, `export`) — різні формати модулів; цей workspace оголошує `"type": "module"`. У ESM немає `__dirname`; використовуйте `import.meta.url` разом із `fileURLToPath` або сучасний `import.meta.dirname`.
 
-```
-1. detached call -> TypeError: Cannot read properties of undefined (reading 'alive')
-2. addEventListener(ship.fire) -> bullets: 0 (silently nothing happened)
-3. arrow wrapper         -> bullets: 1
-4. fire.bind(ship)       -> bullets: 1
-5. arrow class field     -> shots: 1
-   own property (per instance)? true | on the prototype? false
-```
+## Межі цього етапу
 
-Три виправлення й компроміси:
-
-| Виправлення | Плюси | Мінуси |
-|---|---|---|
-| `() => ship.fire()` | явно, легко додати аргументи, нічого не створює на екземплярі | нова функція на кожне підписування; щоб зняти слухача, треба зберегти посилання на неї |
-| `ship.fire.bind(ship)` | `this` прив'язано жорстко | новий bound-об'єкт на кожен виклик `bind`; знову ж треба зберегти посилання для `removeEventListener` |
-| `fire = () => {…}` (поле класу) | передавати можна де завгодно, читається чисто | стрілка створюється **для кожного екземпляра** (пам'ять), метод не на прототипі, не успадковується/не перевизначається звичайним способом |
-
-У `main.js` обрано перший варіант. Тести (`the this bug…`) фіксують і падіння, і мовчазну поведінку, і виправлення.
-
-## Композиція замість глибокої ієрархії (дизайн-нотатка)
-
-**Задача.** Додати (а) самонаведення, яке можна повісити і на кулю, і на астероїд; (б) підбирайку (щит / швидка стрільба / самонаведені кулі): нерухому, зі зіткненнями, але *не корабель*.
-
-**Як би виглядала ієрархія.** `Entity → MovingEntity → {Ship, Bullet, Asteroid}`. Для самонаведення довелося б додати `HomingBullet extends Bullet` і `HomingAsteroid extends Asteroid` і продублювати в них одну й ту саму логіку націлювання. Підбирайка нерухома, тож `MovingEntity` їй не підходить; вона мала б жити поруч як `Entity → Pickup`, а різновиди (щит, швидка стрілянина, самонаведення) вимагали б ще підкласів або `switch` усередині. Наступна комбінація («самонавідна куля, що ще й проходить крізь астероїди») знову плодить класи. Дерево закам'яніло б, а гра змінюється щотижня.
-
-**Що зроблено.** Три прийоми з розділу 3, кожен там, де він доречний:
-
-1. **Поведінка як дані + mixin.** `entity.behaviors` — масив простих об'єктів `{ type: "homing", targets, range, turnRate, ignoreId }`. Код виконання лежить у реєстрі `behaviors.js`, а `withHoming(entity, cfg)` додає її будь-якій сутності. Одна функція тепер наводить і кулі гравця (`targets: ["ship","asteroid"]`), і «мисливців»-астероїдів (`targets: ["ship"]`). Дані серіалізуються, що знадобиться в Лабі 5.
-2. **Ефекти як `Map` на кораблі.** `ship.effects: Map<назва, секунд лишилось>`; щит, швидка стрільба і самонаведення — рядки з таблиці `EFFECTS` у `pickup.js`, а не підкласи. `Ship.takeDamage` просто перевіряє `effects.has("shield")`.
-3. **`Pickup extends Entity` напряму**: нерухомий, `collides = true`, без двигуна, hp та зброї. Нову підбирайку додати = дописати рядок у таблицю.
-
-**Компроміси.** Нема перевірки типів на етапі компіляції (`behaviors` може містити що завгодно), порядок поведінок має значення, а «розумні» поєднання доводиться тестувати вручну. Зате додати нову здатність = один обробник у реєстрі, без правок класів.
-
-## Тести з теорії («Prove it to yourself»)
-
-**1. Делегування, не копія.**
-
-```js
-const a = { hello: "hi" };
-const b = Object.create(a);
-b.hello;                    // "hi"   (b.hasOwnProperty("hello") === false)
-a.hello = "hey";
-b.hello;                    // "hey"  — пошук іде по ланцюжку прототипів і бачить зміну
-```
-
-`b` нічого не копіює: власної властивості `hello` у нього немає, `[[Get]]` піднімається до `a`. Присвоєння `b.hello = …` створило б власну властивість і затінило б `a.hello`.
-
-**2. `this` у методі.**
-
-```js
-class A { m() { return this; } }
-const a = new A();
-const m = a.m;
-m();          // undefined
-m.call(a);    // a
-```
-
-`m()` — виклик без об'єкта (default binding). Тіло класу завжди у strict mode, тому `this` = `undefined` (у sloppy mode було б `globalThis`). `m.call(a)` — явна прив'язка (explicit binding). Помилка зі слухачем та сама: `ship.fire` передано як голу функцію (див. розділ вище).
-
-**3. Об'єкт проти `Map`.**
-
-```js
-const o = { "1": "x" };
-const m = new Map([[1, "x"]]);
-o[1];            // "x"        — ключ об'єкта приводиться до рядка "1"
-m.get("1");      // undefined  — Map зберігає тип ключа: 1 !== "1"
-m.get(1);        // "x"
-```
-
-**Якщо лишився час.** Обидва ланцюжки `extends` (перевірено в Node): `Object.getPrototypeOf(Ship.prototype) === Entity.prototype` → `true`, `Object.getPrototypeOf(Ship) === Entity` → `true` (статичні члени успадковуються окремим ланцюжком), `Entity.prototype → Object.prototype`, `Entity → Function.prototype`. Генератор, який *треба* перервати: `function* ids() { let i = 0; while (true) yield i++; }`; цикл `for (const x of ids())` без `break` — нескінченний, заблокує потік так само, як `while(true)` у Лабі 1.
-
-## Рефлексія — відповіді
-
-1. **Чотири правила `this` за пріоритетом.** (1) `new` — `this` це щойно створений об'єкт; (2) явна прив'язка — `call/apply/bind`; (3) неявна — виклик як метод `obj.f()`, `this` = `obj`; (4) за замовчуванням — звичайний виклик: `undefined` (strict) або `globalThis`. Стрілки не мають власного `this` (беруть лексичний). У `setTimeout(ship.fire, 100)` `this` = `undefined` у strict-коді (у браузері в sloppy — `window`): функцію передали без об'єкта. Виправлення: стрілка-обгортка (мінус: новий замикач на кожен виклик), `bind` (мінус: не можна переприв'язати, треба тримати посилання для зняття слухача), стрілка-поле класу (мінус: копія функції на кожен екземпляр).
-2. **Чому стрілки ігнорують `.bind`.** `this` у стрілки не динамічний: він береться з лексичного оточення в момент створення і більше не змінюється; `call/apply/bind` на нього не впливають. Для коротких колбеків, що мають зберегти `this` оточення, це зручно. Для методу, спільного для багатьох екземплярів, це погано: кожен екземпляр отримує власну копію функції (не на прототипі), її не перевизначити в підкласі через `super`, і пам'яті йде більше.
-3. **Чому `Map`, а не звичайний об'єкт.** (а) Ключі зберігають тип: числа лишаються числами (`o[1]` дає рядковий ключ, `m.get("1") !== m.get(1)`). (б) Немає успадкованих ключів: `obj["constructor"]` існує навіть у порожнього об'єкта, а в `Map` це чесна відсутність. (в) Є справжній `.size`, гарантований порядок вставки, і `Map` швидший при частому додаванні/видаленні. (г) Ключами можуть бути будь-які значення.
-4. **Композиція проти успадкування на прикладі самонавідних куль/астероїдів.** Ієрархія вимагала б `HomingBullet` і `HomingAsteroid` з дубльованим кодом націлювання, а підбирайка (нерухома, колізійна, не корабель) не вписувалась би під `MovingEntity` і потребувала б власної гілки та підкласів на кожен ефект. Композиція: `withHoming(entity, cfg)` один раз, працює для будь-якої сутності; ефекти підбирайок — рядки таблиці. Нова комбінація не додає класів.
-
-## Definition of done
-
-- [x] `Vector2`, `Entity`, `Ship`, `Bullet`, `Asteroid`, `Pickup`, `Explosion`; успадкування лише на 1 рівень (перевіряє тест).
-- [x] `World` на `Map`, ітерований, `ofKind` — генератор, мертві прибираються безпечно (відкладений despawn і spawn).
-- [x] Стрільба працює; помилка з `this` показана (`src/demo/this-bug.js`, тест) і виправлена, пояснення в README.
-- [x] Колізії, шкода з приватним `#hp`, вибухи, респавн, рахунок.
-- [x] Самонаведення й підбирайки через композицію; нотатка про дизайн у README.
-- [ ] Тег `lab-02` (команди нижче).
-
-## Git (історичні команди лабораторної 2)
-
-```bash
-git switch -c lab2
-git add .
-git commit -m "Lab 2: entities, world, collisions, composition"
-git push -u origin lab2
-git tag lab-02
-git push origin lab-02
-```
+WebSocket передає lobby/roster/chat, але не позиції чи snapshot гри. Збереження NDJSON/replay потокове; 200 MiB benchmark — штучний синтетичний log, а не реальний матч. Binary protocol, синхронізація симуляції та production TLS/authentication не входять у лабораторну 4.

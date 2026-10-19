@@ -1,0 +1,22 @@
+{
+  "name": "dogfight",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=.env server/src/index.js",
+    "dev:client": "npm run dev --workspace client",
+    "start": "node --env-file-if-exists=.env server/src/index.js",
+    "build": "npm run build --workspace client",
+    "test": "node --test",
+    "lint": "npm run lint --workspace client && npm run lint --workspace server",
+    "benchmark": "node server/src/log/benchmark.js"
+  }
+}

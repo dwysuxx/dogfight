@@ -106,12 +106,61 @@
         pointer-events: none;
         white-space: pre;
       }
+      #game-chat {
+        position: fixed;
+        left: 8px;
+        bottom: 12px;
+        z-index: 1;
+        width: min(340px, calc(100vw - 32px));
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        font: 12px/1.5 "Courier New", monospace;
+      }
+      #game-chat ol {
+        max-height: 140px;
+        overflow: auto;
+        padding-left: 24px;
+      }
+      #game-chat form {
+        display: flex;
+        gap: 6px;
+      }
+      #game-chat input {
+        min-width: 0;
+        flex: 1;
+        font: inherit;
+      }
+      #game-chat button,
+      #leave-game {
+        padding: 6px 10px;
+        font: inherit;
+        color: #05060a;
+        background: #ffd84a;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #leave-game {
+        position: fixed;
+        left: 16px;
+        top: 16px;
+        z-index: 1;
+      }
     </style>
   </head>
   <body>
     <canvas id="game" hidden></canvas>
     <div id="hud"></div>
     <div id="game-hud"></div>
+    <aside id="game-chat" hidden aria-label="Room chat">
+      <strong id="room-roster">Connecting to room…</strong>
+      <ol id="chat-messages" aria-live="polite"></ol>
+      <form id="chat-form">
+        <input id="chat-input" maxlength="500" autocomplete="off" placeholder="Message the room">
+        <button type="submit">Send</button>
+      </form>
+    </aside>
+    <button id="leave-game" type="button" hidden>Leave room</button>
     <section id="lobby" aria-label="Game lobby"></section>
     <section id="loading" aria-live="polite" hidden>
       <strong id="loading-status">Preparing game…</strong>

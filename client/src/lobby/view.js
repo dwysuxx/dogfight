@@ -13,6 +13,11 @@ export function createLobbyView(root, lobby, onJoin) {
       <button type="submit">Join selected room</button>
       <button type="button" id="refresh-rooms">Refresh</button>
     </form>`;
+  root.insertAdjacentHTML("beforeend", `
+    <form id="create-room-form">
+      <label>New room <input id="room-name" maxlength="40" required placeholder="Room name"></label>
+      <button type="submit">Create room</button>
+    </form>`);
 
   const status = root.querySelector("#lobby-status");
   const roomList = root.querySelector("#room-list");
@@ -71,6 +76,25 @@ export function createLobbyView(root, lobby, onJoin) {
       } catch (error) {
         status.textContent = `Could not join room: ${error.message}`;
       }
+    },
+    { signal },
+  );
+  root.querySelector("#create-room-form").addEventListener(
+    "submit",
+    (event) => {
+      event.preventDefault();
+      const input = root.querySelector("#room-name");
+      const name = input.value;
+      status.textContent = "Creating room…";
+      void lobby
+        .createRoom(name)
+        .then((room) => {
+          input.value = "";
+          status.textContent = `Created ${room.name}`;
+        })
+        .catch((error) => {
+          status.textContent = `Could not create room: ${error.message}`;
+        });
     },
     { signal },
   );
