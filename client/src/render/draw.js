@@ -1,11 +1,11 @@
-import { TAU, lerp, lerpAngle } from "../sim/math.js";
-import { EFFECTS } from "../sim/pickup.js";
-import { Ship } from "../sim/ship.js";
+import { TAU, lerp, lerpAngle } from "@dogfight/shared/sim/math.js";
+import { EFFECTS } from "@dogfight/shared/sim/pickup.js";
+import { Ship } from "@dogfight/shared/sim/ship.js";
 
 // Every entity is drawn at lerp(previous, current, alpha) — the Lab 1
 // interpolation, now applied to all of them (angle via the shortest path).
 export function drawEntity(ctx, e, alpha, assets) {
-  if (e.kind === "explosion") return drawExplosion(ctx, e);
+  if (e.kind === "explosion") return drawExplosion(ctx, e, alpha);
 
   const x = lerp(e.prevPos.x, e.pos.x, alpha);
   const y = lerp(e.prevPos.y, e.pos.y, alpha);
@@ -14,12 +14,7 @@ export function drawEntity(ctx, e, alpha, assets) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(angle);
-  const frameName =
-    e.kind === "ship"
-      ? e.name === "bot"
-        ? "botShip"
-        : "playerShip"
-      : e.kind;
+  const frameName = e.kind === "ship" ? (e.isBot ? "botShip" : "playerShip") : e.kind;
   const frame = assets?.frames?.[frameName];
   if (assets?.spritesheet && frame) {
     const size = e.kind === "ship" ? 34 : e.kind === "asteroid" ? e.radius * 2.2 : e.radius * 2.8;
@@ -48,6 +43,17 @@ export function drawEntity(ctx, e, alpha, assets) {
         break;
     }
   }
+  if (e.kind === "ship") drawShipName(ctx, e, angle);
+  ctx.restore();
+}
+
+function drawShipName(ctx, ship, interpolatedAngle) {
+  ctx.save();
+  ctx.rotate(-interpolatedAngle);
+  ctx.fillStyle = ship.color;
+  ctx.font = "12px monospace";
+  ctx.textAlign = "center";
+  ctx.fillText(ship.name, 0, -22);
   ctx.restore();
 }
 
@@ -134,13 +140,13 @@ function drawPickup(ctx, p) {
   ctx.fillText(fx.label, 0, 1);
 }
 
-function drawExplosion(ctx, e) {
+function drawExplosion(ctx, e, alpha) {
   ctx.save();
   ctx.fillStyle = e.color;
   for (const p of e.particles) {
     if (p.life <= 0) continue;
     ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
-    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+    ctx.fillRect(lerp(p.prevX ?? p.x, p.x, alpha) - 1.5, lerp(p.prevY ?? p.y, p.y, alpha) - 1.5, 3, 3);
   }
   ctx.restore();
 }

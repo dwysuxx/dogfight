@@ -35,6 +35,12 @@ export class Entity {
     this.prevAngle = angle;
   }
 
+  // The wire form: plain data only, so it survives structuredClone, JSON and
+  // the DataView codec. Each kind adds its own fields and a static fromSnapshot.
+  toSnapshot() {
+    return { id: this.id, kind: this.kind, x: this.pos.x, y: this.pos.y, angle: this.angle };
+  }
+
   savePrevious() {
     this.prevPos.copy(this.pos);
     this.prevAngle = this.angle;

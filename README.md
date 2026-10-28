@@ -1,120 +1,177 @@
-# Dogfight — Лабораторна 4: Node.js, WebSocket і потоки
+# Dogfight — Лабораторна 5: авторитетний сервер, prediction і бінарний протокол
 
-Лаба продовжує браузерну гру з [лаби 3](https://github.com/dwysuxx/dogfight/tree/lab03) і переносить lobby на справжній Node.js HTTP/WebSocket сервер. Сервер керує кімнатами та чатом, а файлові журнали пише й віддає потоками з backpressure. Стан симуляції не синхронізується між клієнтами: це тема лабораторної 5.
+> **GIF двох гравців:** запишіть 20 секунд двох вікон поруч (`?lag=50&jitter=30&drop=0.02`, див. нижче), збережіть як `docs/lab-05-two-players.gif` і розкоментуйте рядок нижче.
+<!-- ![Два гравці, ~100 ms RTT ±30 ms, 2% втрат](docs/lab-05-two-players.gif) -->
 
-## Вимоги й запуск
+Лаба продовжує [лабу 4](https://github.com/dwysuxx/dogfight/tree/lab04). Тепер є один авторитетний сервер, який рахує симуляцію з частотою **30 Hz**. Клієнти надсилають лише **inputs**, а сервер у відповідь розсилає **snapshots**. Власний корабель клієнт **передбачає** (prediction) й **узгоджує** з сервером (reconciliation). Чужі кораблі він **інтерполює** в минулому. Знімки йдуть **бінарним протоколом** на `DataView`.
 
-Потрібен Node.js 22 або новіший.
+## Запуск
+
+Потрібен Node.js 22+.
 
 ```powershell
 npm ci
-Copy-Item .env.example .env   # необов'язково: значення за замовчуванням уже працюють
 npm run build
-npm start
+npm start                 # http://127.0.0.1:3000
 ```
 
-Відкрийте `http://127.0.0.1:3000`. Для розробки запустіть у двох терміналах `npm run dev` (Node API/WebSocket) і `npm run dev:client` (Vite, за замовчуванням `http://localhost:5173`). Vite проксить `/api` і `/ws` на сервер.
+Для розробки використовуйте `npm run dev` (сервер) і `npm run dev:client` (Vite, `http://localhost:5173`). Інші команди: `npm test` (усі три пакети), `npm run lint`, `npm run netbench` (заміри для таблиць нижче).
 
-`npm test` запускає тести клієнта й сервера; `npm run lint` перевіряє обидва пакети; `npm run build` збирає браузерний клієнт у `client/dist`. Конфігурація: `HOST`, `PORT`, `LOG_DIR`, `MAX_ROOMS`, `MAX_PLAYERS_PER_ROOM`, `MAX_PAYLOAD`, `MAX_MESSAGES_PER_SECOND`, `SLOW_CLIENT_BYTES`, `JOIN_TIMEOUT_MS`, `HEARTBEAT_MS`. Значення перевіряються при старті. `Ctrl+C` або `SIGTERM` зупиняє приймання з'єднань, закриває WebSocket і дописує журнали.
+**Параметри сторінки:**
+
+| URL | Що робить |
+|---|---|
+| `?lag=50&jitter=30&drop=0.02` | штучна мережа для цього з'єднання: затримка 50 мс **в кожен бік** + випадкові 0–30 мс, 2% втрачених inputs/snapshots (≈100 мс RTT ±30) |
+| `?codec=json` | JSON замість бінарного кодека (для порівняння) |
+| `?chaos=1` | експеримент «зламаний детермінізм»: `Math.random()` у кроці prediction |
+
+**Клавіші (netgraph):** `[` / `]` — interpolation delay ±16 мс; `L` — перемикає мережеві пресети (вимкнено → ~100 → ~200 → ~300 мс RTT) просто під час гри; `P` — prediction увімк./вимк.; `I` — interpolation увімк./вимк.; `N` — сховати netgraph.
+
+Сервер теж має параметри за замовчуванням для всіх з'єднань: `NET_LAG_MS`, `NET_JITTER_MS`, `NET_DROP` у `.env`. `GET /api/stats` показує тривалість і jitter тіку, overruns, лічильники inputs (applied / frozen / catch-up / dropped), а також для кожного клієнта codec, умови netsim і bytes/s за останню секунду.
+
+Перевірка вручну: відкрийте дві вкладки з `?lag=50&jitter=30&drop=0.02` і зайдіть в одну кімнату. Власний корабель реагує миттєво, correction у netgraph тримається біля 0 і стрибає лише при зіткненнях. Натисніть `P`: тепер корабель рухається тільки зі snapshots, на повний RTT пізніше. Так відчувається M1.
 
 ## Структура
 
 ```text
-client/                       Vite-клієнт із попередніх лабораторних
-  src/connection.js           WebSocket: черга, join, reconnect із backoff
-  src/lobby/                  HTTP lobby та незалежний DOM-рендеринг
-  vite.config.js              dev proxy /api і /ws
-server/
-  src/index.js                запуск, конфігурація, graceful shutdown
-  src/config.js               перевірка environment
-  src/http.js                 node:http, API і безпечна роздача dist
-  src/protocol.js             версія 0 JSON-протоколу і валідація
-  src/rooms.js                Room/RoomManager на EventEmitter
-  src/ws.js                   lifecycle, heartbeat, rate і slow-client policy
-  src/log/matchlog.js         object-mode Transform і pipeline до NDJSON
-  src/log/replay.js           async iterator для incremental replay
-  src/log/benchmark.js        200 MiB throttled-stream RSS benchmark
-server/test/                  node:test: HTTP, WebSocket, rooms, replay
+shared/                 @dogfight/shared — npm workspace, імпортується клієнтом і сервером
+  sim/                  симуляція (перенесена з client/src/sim), toSnapshot/fromSnapshot, ai.js
+  sim/snapshot.js       entityFromSnapshot, snapshotEntities, hashWorld
+  sim/scenario.js       сценарій детермінізму (Node-тест і dogfightDeterminism() у браузері)
+  protocol/messages.js  версія, типи повідомлень, TICK_RATE, кнопки-біти, validateInputs
+  codec/json.js         JSON-кодек (базова лінія)
+  codec/binary.js       DataView-кодек + специфікація формату
+  net/prediction.js     Predictor: prediction, reconciliation, smoothing
+server/src/
+  match.js              Match: авторитетна симуляція кімнати, черги inputs, ack
+  ticker.js             30 Hz на абсолютних цілях часу + статистика
+  netsim.js             latency/jitter/drop injector
+  ws.js                 сокети, кодеки, розсилка snapshots, rate limit, /api/stats
+  tools/headless.js     безголовий netcode-прогін у віртуальному часі
+  tools/netbench.js     заміри для README
+client/src/
+  net/session.js        клієнтський netcode: inputs, predictor, інтерполяція, метрики
+  net/netgraph.js       оверлей: RTT, вік snapshot, bytes/s, pending, correction, графік
+  snapshot-buffer.js    буфер інтерполяції з регульованою затримкою
+  connection.js         WebSocket: JSON + binaryType "arraybuffer", reconnect
 ```
 
-Кореневий `package.json` оголошує npm workspaces `client` і `server`; код використовує ESM та `node:`-префікси для вбудованих модулів.
+Пакет `shared/` не має доступу ні до DOM, ні до вбудованих модулів Node: лише можливості мови, `EventTarget` і `TextEncoder`. Це перевіряють тест `shared/test/determinism.test.js` (імпорт у Node без `window` + статичний пошук `document`, `node:`, `Math.random(`, `Date.now(`) і ESLint (`no-restricted-properties` забороняє `Math.random` і `Date.now`).
 
-## HTTP, кімнати та протокол
+## Як це працює
 
-- `GET /health` — статус процесу; `GET /api/rooms` — кімнати, місткість і конфігурація арени; `POST /api/rooms` — створює кімнату з JSON `{ "name": "Practice", "arena": { "width": 960, "height": 540, "asteroids": 6 } }`. Тіло має обмеження `MAX_PAYLOAD`; некоректні запити отримують 4xx.
-- У production `node:http` роздає `client/dist` із MIME-типами, `realpath`-перевіркою symlink і захистом від path traversal. `/api/replays/:id` — окремий маршрут для журналів, а невідомий `/api/...` не маскується SPA fallback-ом.
-- `Room extends EventEmitter`: `join`, `leave`, `chat`, `empty` і структуровані `event` для журналу. `RoomManager` лімітує кількість кімнат/гравців та видаляє кімнату після виходу останнього гравця.
-- WebSocket endpoint: `/ws`. Усі вхідні повідомлення — JSON з `v: 0`: `{ "v": 0, "type": "join", "room": "orbit", "name": "Ada" }` або `{ "v": 0, "type": "chat", "text": "Hi!" }`. Сервер перевіряє версію, тип, форму, додаткові поля та довжину рядків; oversize frame закривається `1009`, порушення протоколу — `1002`/`1008`.
-- Клієнт має надіслати `join` за 5 секунд. Сервер повертає `joined`, оновлює `roster` і ретранслює чат. Ping/pong перевіряє живість сокетів; token bucket обмежує повідомлення, а повільному клієнту не відправляється chat при переповненому `bufferedAmount` (для критичного roster з'єднання закривається).
-- `client/src/connection.js` повторно підключається з експоненційною затримкою, повторює join та тримає обмежену чергу повідомлень під час `CONNECTING`.
+**Сервер.** На кожну кімнату є один `Match` із тікером 30 Hz. `setInterval(33)` дрейфує, тому кожен тік плануємо на абсолютний час: `target += 33.33; setTimeout(tick, target − now)`. Якщо процес відстав більше ніж на 5 тіків, тікер не намагається наздогнати їх пачкою, а синхронізується заново й рахує `overrun`. Кожен тік робить так: застосовує inputs, викликає `world.step(1/30)` і розсилає snapshot із `tick` та персональним `ack` (`lastProcessedSeq`).
 
-Перевірка вручну: запустіть сервер та дві вкладки, введіть різні імена, приєднайтесь до однієї кімнати й надішліть чат. Обидві вкладки отримають той самий roster і повідомлення. Для API можна використати `curl.exe http://127.0.0.1:3000/api/rooms` та POST з JSON body.
+**Inputs.** Клієнт надсилає `{ seq, controls }` на кожен крок симуляції (той самий `dt = 1/30`). Кожне повідомлення повторює 4 останні inputs, тож одна втрата пакета не губить натискання. Сервер ігнорує дублікати й перевіряє форму: 1–4 inputs, `seq` іде підряд, рівно чотири boolean. Зайве поле на кшталт `turn: 1000` закриває з'єднання (1008). Rate limit працює за token bucket, 60 повідомлень/с.
 
-## Match logs, streams і backpressure
+**Тонке місце — час inputs.** Клієнт передбачив input N поверх N−1, тож сервер мусить застосувати їх так само, хоч би що зробила мережа:
+- якщо цього тіку input для корабля немає (jitter), корабель **заморожується**. Повторювати останній input не можна, бо такого input клієнт не надсилав.
+- якщо після затримки прийшла пачка, зайві inputs виконуються як **окремі під-кроки корабля**, і черга не додає латентності.
+- наздоганяти можна лише за «кредит», що накопичується по 1 на тік (максимум 6). Клієнт, який шле 60 inputs/с, не літає вдвічі швидше (speed hack): надлишок відкидається (`server/test/match.test.js`).
 
-Кожна кімната пише події в `server/logs/<room>-<timestamp>-<id>.ndjson`. `MatchLogTransform` працює в object mode і перетворює події в NDJSON; `pipeline` передає їх до `createWriteStream`, поширює помилки та застосовує backpressure до файлового writable. Оскільки `EventEmitter.emit()` синхронний і не вміє чекати `drain`, адаптер призупиняє подачу в stream та тримає не більше 4096 pending events; якщо черга переповниться, log pipeline завершується явною помилкою замість необмеженого росту RAM.
+Завдяки цьому при 300 мс RTT, ±100 jitter і 5% втрат correction у відкритому космосі становить ~0.002 px (таблиця нижче).
 
-`GET /api/replays` повертає список, `GET /api/replays/:id` передає файл через `pipeline(createReadStream, response)` — replay не завантажується цілком у пам'ять. `server/src/log/replay.js` також читає NDJSON рядок за рядком через async iterator.
+**Prediction + reconciliation** (`shared/net/prediction.js`). Клієнт тримає приватний маленький `World` лише з власним кораблем і власними кулями. Input застосовується одразу, тим самим кодом `Ship.update`, що й на сервері. Коли приходить snapshot:
+1. корабель і кулі скидаються до серверного стану (`Ship.fromSnapshot`, `Bullet.fromSnapshot`);
+2. inputs з `seq ≤ ack` відкидаються;
+3. решта програється заново.
 
-Щоб відтворити вимірювання потоку приблизно 200 MiB у slow consumer і згенерувати графік:
+Різниця між старим і новим передбаченням і є correction. Вона йде в netgraph і візуально ховається offset-ом, що згасає за ~100 мс. Стрибок понад 120 px (respawn) просто застосовується.
 
-```powershell
-npm run benchmark
-```
+**Prediction куль.** `Ship.fire` позначає кулю `seq` того input, який її випустив. Передбачена куля з'являється одразу й живе в predicted world. При reconciliation серверні кулі цього гравця замінюють передбачені, а ще не підтверджені (`seq > ack`) відтворюються під час replay. Звук пострілу грає локально; серверну подію `fired` для власного корабля клієнт пропускає.
 
-Скрипт створює тимчасовий NDJSON replay потоком, віддає його локальному HTTP-клієнту зі штучним throttling, знімає `process.memoryUsage().rss` кожні 100 мс, зберігає графік у [server/docs/backpressure-rss.svg](server/docs/backpressure-rss.svg) і видаляє тимчасовий replay. Розмір receive buffer — 64 KiB. Обсяг фактичних байтів і RSS min/max друкуються в консолі; результат залежить від ОС і машини.
+**Інтерполяція.** Чужі сутності малюються на `now − 100 мс`, між двома snapshots, що обмежують цей момент (`interpolateEntity`: позиції з урахуванням wrap-шва, кути найкоротшою дугою, вік вибуху). Сутність, якої вже немає в новішому snapshot, малюється, доки час рендеру не дійде до нього. Затримку можна змінювати під час гри клавішами `[` `]`. **Чому 100 мс:** 66 мс (2 інтервали) — теоретичний мінімум, але тоді одна втрата або jitter понад 33 мс уже зупиняє інтерполяцію. 100 мс переживає одну втрату плюс ±30 мс jitter, ціною того, що чужі кораблі видно на ~100 мс у минулому.
 
-![RSS під час throttled replay](server/docs/backpressure-rss.svg)
+**Вибухи** не передаються частинками (36 частинок × 6 чисел займали б більшу частину snapshot). Передається лише seed (id), кількість, швидкість, колір і вік, а клієнт відновлює частинки сам.
 
-`writable.write(chunk) === false` означає, що writable досяг high-water mark: це сигнал припинити подачу до `drain`, а не помилка запису. `pipeline` з'єднує readable, transform і writable та координує backpressure й cleanup; цикл, що ігнорує false, накопичує буфери в RAM. TCP і WebSocket мають ту саму проблему повільного споживача: вимірюйте `bufferedAmount`, обмежуйте чергу, відкидайте необов'язкові дані або закривайте з'єднання.
+## Бінарний протокол (v1)
 
-## Event loop: блокування та обробка помилок
+Повна специфікація — коментар на початку `shared/codec/binary.js`. Коротко: **little-endian скрізь**, байт 0 — тип, байт 1 — версія. Кадр із невідомим типом, неправильною довжиною чи ненульовими зарезервованими бітами відхиляється цілком, а не розбирається частково.
 
-libuv проходить фази timers → pending callbacks → poll (I/O) → check (`setImmediate`) → close callbacks; між callback-ами Node спорожнює чергу `process.nextTick`, потім promise microtasks. У головному модулі порядок `setTimeout(fn, 0)` та `setImmediate(fn)` може відрізнятися залежно від часу входу в loop; всередині I/O callback `setImmediate` виконується у check-фазі перед наступним timers. `process.nextTick` не є фазою і здатний голодувати I/O, якщо безмежно додавати callback-и.
+| Повідомлення | Розмітка |
+|---|---|
+| INPUT (1) | `u8 type, u8 v, u8 n(1..4)`, далі n × `{u32 seq, u8 buttons}`; біти 0–3: left/right/thrust/fire, 4–7 = 0 |
+| PING (2) / PONG (17) | `u8 type, u8 v, f64 t` (+ `u32 tick` у PONG) |
+| STATE (16) | `u8 type, u8 v, u32 tick, u32 ack, u16 entities, u8 events`, події `{u8 type, u16 id}`, далі сутності |
+| сутність | `u16 id, u8 kind, f32 x, f32 y, i16 angle (1/1000 rad)` + поля виду: ship +23, bullet +16, asteroid +16, pickup +1, explosion +8 байт |
 
-JavaScript у процесі виконується одним потоком. Для демонстрації запустіть дві вкладки в одній кімнаті та:
+`ack` — єдине поле, яке відрізняється для різних клієнтів. Тому сервер кодує snapshot **один раз** і для кожного клієнта копіює буфер, змінюючи лише 4 байти (`withAck`). Join, chat, roster і помилки лишаються JSON-текстом. Клієнт обирає кодек у `join` (`codec: "binary" | "json"`).
 
-1. У першій викличте `fetch("/api/slow?ms=300")` із DevTools або відкрийте URL окремо.
-2. Одразу надішліть chat у другій вкладці.
-3. Chat з'явиться після завершення повного синхронного циклу на 300 мс — один handler затримав HTTP, WebSocket, таймери та всіх інших клієнтів.
+**Квантування кута.** `Int16` з кроком 1/1000 rad (кут спершу загортається в (−π, π], тож ±3142 вміщується) дає похибку до 0.0005 rad. На носі корабля (14 px) це 0.007 px, на кулі за 500 px — 0.25 px. Обидві величини менші за піксель, тому вистачає. Таймери (`fireCooldown`, `ttl`) мають крок 0.1 мс, бо від них залежить, чи вистрілить передбачений корабель у тому ж тіку, що й серверний.
 
-`/api/slow` навмисно блокує event loop лише для цього локального досліду; параметр обмежений 1–1000 мс і не використовується грою. У нормальному handler-і треба ділити CPU-роботу на порції або віддати її worker thread, а I/O — очікувати асинхронно.
+Тести round-trip (`shared/test/codec.test.js`) проганяють понад 200 справжніх snapshots: `decode(encode(msg))` збігається з `msg` у межах квантування кожного поля. Окремо перевірено little-endian розмітку байтів, `withAck` і відхилення пошкоджених кадрів.
 
-Події `EventEmitter` викликають слухачів синхронно у порядку підписки. `error` без слухача спеціально кидає виняток і завершує процес; тому HTTP/WebSocket/room/log emitters мають явно обробляти помилки. Аналогічно не можна губити rejected promise: Node за типовою конфігурацією перетворює необроблений rejection на помилку процесу.
+## Заміри (`npm run netbench`, Windows 10, Node 24)
+
+**JSON vs binary**, 30 Hz, 4 гравці + бот + 6 астероїдів (~25.5 сутностей у snapshot), 900 тіків:
+
+| Codec | Bytes/snapshot | KB/s per client (down) | KB/s per client (up) | Encode+decode µs |
+|---|---|---|---|---|
+| JSON | 5701 | 167.03 | 10.17 | 67.9 |
+| Binary (`DataView`) | 764 | 22.38 | 0.67 | 30.3 |
+
+Бінарний варіант у **7.5× менший** і в 2.2× швидший. «Up» — повідомлення з 4 inputs (redundancy) 30 разів на секунду: 23 байти проти ~350.
+
+**Reconciliation correction**, безголовий прогін (`server/src/tools/headless.js`): реальні `Match` і `Predictor`, віртуальний час, кожне повідомлення проходить бінарний кодек, 2 пілоти, 20 с:
+
+| Умови | Mean px | p95 px | Max px | Frozen ticks | Catch-up sub-steps |
+|---|---|---|---|---|---|
+| LAN (0 ms) | 0.0001 | 0.0001 | 0.000 | 0 | 0 |
+| ~100 ms RTT ±30, 2% drop | 0.0004 | 0.0017 | 0.003 | 259 | 255 |
+| ~300 ms RTT ±100, 5% drop | 0.0015 | 0.0099 | 0.016 | 491 | 480 |
+| ~100 ms RTT + астероїди + бот | 0.0390 | 0.0017 | 21.820 | 244 | 255 |
+| ~100 ms RTT, `Math.random()` у кроці клієнта | 0.5274 | 1.5098 | 3.041 | 259 | 255 |
+
+Залишкові ~0.001 px — це квантування `f32`. Сплески до 22 px дають лише зіткнення, яких клієнт не може передбачити. Ці сценарії стали регресійним тестом `server/test/netcode.test.js`.
+
+**Таймери**, 5 с, ціль 33.33 мс:
+
+| Timer | Ticks | Mean interval ms | Mean \|error\| ms | Max \|error\| ms | Drift after run ms |
+|---|---|---|---|---|---|
+| `setInterval(fn, 33)` | 108 | 46.29 | 12.95 | 14.64 | 1386.0 |
+| absolute-target `setTimeout` | 149 | 33.32 | 4.09 | 13.89 | −1.9 |
+
+На Windows таймер має гранулярність ~15.6 мс, тому `setInterval(33)` фактично спрацьовує раз на ~46 мс і за 5 секунд відстає на 1.4 с. Абсолютні цілі теж тремтять (окремий тік до ±14 мс), але похибка не накопичується: середній інтервал 33.32 мс, дрейф −2 мс.
+
+## Детермінізм
+
+`shared/sim/scenario.js` проганяє гру 1000 кроків на скриптових inputs і рахує FNV-хеш точних бітів float-ів (через `DataView`, little-endian). Node дає `313ef01b` (зафіксовано в тесті). Щоб перевірити браузер, відкрийте DevTools і виконайте `dogfightDeterminism().hash`: має вийти те саме значення.
+
+**Навмисно зламаний детермінізм** (`?chaos=1`). Кожен крок prediction множить швидкість на `1 ± 4%·Math.random()`. У netgraph correction піднімається з ~0.00 до 0.5–3 px на кожному snapshot, і корабель помітно «підтягується». На сервері такого шуму немає, тож розбіжність видно одразу. Цифри наведено в останньому рядку таблиці correction вище. `Math.random()`, `Date.now()` чи обхід колекції в порядку, що залежить від середовища, дали б той самий симптом на кожному клієнті.
+
+## Netcode write-up
+
+**Три проблеми.**
+1. **Латентність.** Між натисканням і відповіддю сервера минає RTT. Її ховає prediction власного корабля тим самим кодом, що й на сервері; інтерполяція згладжує решту світу.
+2. **Узгодженість.** Якщо кожен клієнт рахує свій світ, через float-дрейф і втрати пакетів гравці бачать різні ігри. Тому світ один, серверний, а клієнтський стан — це завжди «snapshot + replay ще не підтверджених inputs».
+3. **Чітерство.** Клієнт не надсилає позицій. Сервер перевіряє кожен input (форма, послідовні `seq`, без зайвих полів), обмежує частоту і не дає виконати більше inputs, ніж минуло тіків.
+
+**Що показував netgraph.** Без prediction (`P`) корабель рушає лише через повний RTT (з `?lag=50&jitter=30` netgraph показує RTT ~100–160 мс) і рухається кроками snapshots. З prediction він реагує в тому ж кадрі, а correction у відкритому космосі тримається на рівні тисячних пікселя (таблиця вище).
+
+**Баг детермінізму, на який я натрапив.** Перша версія на тіку без input **повторювала останній input**. Це крок, якого клієнт ніколи не передбачав, тож серверний корабель робив зайвий крок. У безголовому прогоні на 60 с при ~100 мс RTT ±30 це дає поодинокі corrections до 2.5 px і, що гірше, чергу ~1.2–1.4 inputs на сервері (≈40–46 мс зайвої затримки), яка вже ніколи не спадає. Після переходу на заморожування корабля й наздоганяння під-кроками за кредитом (див. «Як це працює») максимум correction становить 0.003 px, а черга тримається на нулі. Другий кандидат — кут, що необмежено накопичувався: він не вмістився б у `Int16`. Тепер `Ship.update` загортає його через `wrapAngle`.
+
+**Interpolation delay.** Обрано 100 мс (3 тіки): компроміс між «бачу чужих на 100 мс у минулому» та «одна втрата чи jitter до ±30 мс не зупиняє картинку». За поганої мережі затримку можна підняти клавішею `]`, а netgraph показує, на скільки тіків рендер відстає від останнього snapshot.
+
+**Межі.** Lag compensation (сервер не «перемотує» світ, коли перевіряє влучання) і delta-стиснення не реалізовані, це Stretch. Без lag compensation ви цілитесь у минуле положення ворога, тож при великому RTT потрібне випередження. Власні кулі на сервері рухаються в серверному часі, тому під сильним jitter передбачена куля може стрибнути вперед на кілька пікселів.
+
+## «Prove it» експерименти
 
 ```text
-$ node --input-type=module -e "Promise.reject(new Error('disk failed'))"
-node:internal/process/promises:...
-Error: disk failed
+DataView setFloat32(0, 1.5, true)  -> [0, 0, 192, 63]     (little-endian)
+DataView setFloat32(0, 1.5, false) -> [63, 192, 0, 0]     (big-endian: байти навпаки)
+new Uint16Array(new Uint8Array([1,0,0,1]).buffer) -> [1, 256]   на LE-процесорі; на BE було б [256, 1]
 ```
 
-Для серверного коду перехоплюйте відому операцію (`try/catch` або `.catch`) і логгуйте контекст; глобальний `unhandledRejection` у `server/src/index.js` — лише остання лінія оборони, що ініціює shutdown, а не спосіб приховати помилку.
+Typed array використовує порядок байтів процесора, тож для локальних даних вона правильний і швидкий вибір. Протокол читають інші машини, тому в ньому лише `DataView` з явним `littleEndian = true`. JSON проти binary та `setInterval` проти абсолютного таймера — у таблицях вище. Детермінізм у Node і Chrome — хеш вище.
 
-## Node REPL експерименти
+## Відповіді для дошки (коротко)
 
-```js
-import { EventEmitter } from "node:events";
-import { Readable, Writable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-
-console.log(Buffer.from("привіт").length, "привіт".length); // bytes vs UTF-16 code units
-console.log(Buffer.from([0xff, 0x00]).readUInt16BE(0)); // 65280
-
-const source = Readable.from((function* () {
-  for (let i = 0; i < 100; i++) yield Buffer.alloc(64 * 1024);
-})());
-const slow = new Writable({
-  write(_chunk, _encoding, callback) { setTimeout(callback, 10); },
-});
-await pipeline(source, slow);
-
-const emitter = new EventEmitter();
-emitter.on("error", (error) => console.error("handled:", error.message));
-emitter.emit("error", new Error("disk unavailable"));
-```
-
-CommonJS (`require`, `module.exports`) і ESM (`import`, `export`) — різні формати модулів; цей workspace оголошує `"type": "module"`. У ESM немає `__dirname`; використовуйте `import.meta.url` разом із `fileURLToPath` або сучасний `import.meta.dirname`.
-
-## Межі цього етапу
-
-WebSocket передає lobby/roster/chat, але не позиції чи snapshot гри. Збереження NDJSON/replay потокове; 200 MiB benchmark — штучний синтетичний log, а не реальний матч. Binary protocol, синхронізація симуляції та production TLS/authentication не входять у лабораторну 4.
+1. **Чому сервер авторитетний?** У клієнт-авторитетній моделі гравці бачать різні ігри (дрейф, втрати), а чітер може телепортуватися: досить у DevTools надіслати `{x: …}` замість inputs. Тут сервер приймає лише кнопки.
+2. **Prediction** покладається на детермінізм: той самий стан і ті самі inputs дають той самий результат. Його порушення видно як correction понад нуль у відкритому космосі (netgraph, `netcode.test.js`, `?chaos=1`).
+3. **Сценарій із snapshot тіку 100 (ack 57) і буфером 55–61.** Корабель скидається до стану зі snapshot, inputs 55–57 відкидаються, 58–61 програються заново. Корабель знову «на 4 inputs попереду», і якщо прогноз був правильний, нічого не зрушить.
+4. **Інтерполяція в минулому:** щоб завжди мати дві точки для лінійної інтерполяції. Затримка — це обмін між свіжістю і стійкістю до jitter та втрат; обрано 100 мс.
+5. **Lag compensation:** сервер перевіряє постріл проти стану, який бачив стрілець (now − RTT/2 − interpolation delay). Без неї доводиться цілитись із випередженням.
+6. **`DataView` vs `Float32Array`.** `DataView` потрібен для змішаної розмітки з явним порядком байтів (протокол, файл). `Float32Array` підходить для однорідних масивів у пам'яті одного процесора, де порядок байтів збігається завжди.
+7. **`Int16` 1/1000 rad:** похибка ≤0.0005 rad, тобто ≤0.007 px на носі корабля й ≤0.25 px за 500 px. Перевірено round-trip тестом і візуально.
+8. **Чому не `setInterval`:** він дрейфує й на Windows спрацьовує раз на ~46 мс. Абсолютна ціль не накопичує похибку. Якщо тік триває довше за інтервал, наступні йдуть одразу, а при відставанні понад 5 тіків тікер синхронізується заново й рахує overrun (CPU-bound, тема лаби 7).
+9. **`Math.random()`, `Set`, `Date.now()` у sim.** `Math.random()` і `Date.now()` дають різні значення на клієнті й сервері, і prediction розходиться з сервером. Порядок обходу `Set`/`Map` у JS визначений (порядок вставки), але якщо клієнт і сервер вставляють сутності в різному порядку, зіткнення та rng-виклики підуть в іншій послідовності.

@@ -12,12 +12,25 @@ export class World extends EventTarget {
   #timers = [];
   #systems = [];
   #stepping = false;
+  #assignIds;
+  #idPrefix;
+  #nextEntityId = 1;
+  #named = new WeakSet(); // entities that already received an id from this world
 
-  constructor({ width = 960, height = 540, seed = 1, collisions = findCollisions } = {}) {
+  constructor({
+    width = 960,
+    height = 540,
+    seed = 1,
+    collisions = findCollisions,
+    idPrefix = null,
+    assignIds = idPrefix !== null,
+  } = {}) {
     super();
     this.bounds = { width, height };
     this.rng = createRng(seed);
     this.collisions = collisions; // swappable: world -> iterable of [a, b]
+    this.#assignIds = assignIds;
+    this.#idPrefix = idPrefix;
     this.time = 0;
     this.tick = 0;
   }
@@ -30,12 +43,29 @@ export class World extends EventTarget {
     this.dispatchEvent(new CustomEvent(type, { detail }));
   }
 
-  spawn(entity) {
+  // With assignIds the world numbers its own entities: ids are per world (two
+  // rooms never collide) and, without a prefix, fit the binary protocol's
+  // Uint16. A respawned entity keeps its id; keepId adopts an id from elsewhere
+  // (a server snapshot rebuilt on the client).
+  spawn(entity, { keepId = false } = {}) {
+    if (this.#assignIds && !keepId && !this.#named.has(entity)) entity.id = this.#newId();
+    this.#named.add(entity);
     entity.world = this;
     // Mid-step spawns are deferred so we never grow the Map while iterating it.
     if (this.#stepping) this.#pending.push(entity);
     else this.#entities.set(entity.id, entity);
     return entity;
+  }
+
+  #newId() {
+    if (this.#idPrefix !== null) return `${this.#idPrefix}${this.#nextEntityId++}`;
+    // Numeric ids wrap inside 1..65535 and skip ids that are still alive.
+    for (let tries = 0; tries < 0xffff; tries++) {
+      const id = this.#nextEntityId;
+      this.#nextEntityId = (this.#nextEntityId % 0xffff) + 1;
+      if (!this.#entities.has(id) && !this.#pending.some((e) => e.id === id)) return id;
+    }
+    throw new RangeError("World is out of entity ids");
   }
 
   // Deferred: only marks the entity dead; the sweep at the end of step() removes it.
@@ -75,13 +105,14 @@ export class World extends EventTarget {
     this.#systems.push(fn);
   }
 
-  // inputs: Map<entityId, {left, right, thrust, fire}>
+  // inputs: Map<entityId, {left, right, thrust, fire, seq?}>
   step(dt, inputs = NO_INPUTS) {
     this.#stepping = true;
 
     for (const e of this) e.savePrevious();
     for (const e of this) {
-      if (!e.alive) continue;
+      // frozen: the server had no input for this ship this tick (see Match).
+      if (!e.alive || e.frozen) continue;
       const controls = inputs.get(e.id);
       if (controls) e.controls = controls;
       e.update(dt);

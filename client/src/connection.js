@@ -1,6 +1,14 @@
-const PROTOCOL_VERSION = 0;
-const MAX_QUEUED_MESSAGES = 100;
+import * as binaryCodec from "@dogfight/shared/codec/binary.js";
+import * as jsonCodec from "@dogfight/shared/codec/json.js";
+import { PROTOCOL_VERSION } from "@dogfight/shared/protocol/messages.js";
 
+const MAX_QUEUED_MESSAGES = 100;
+const CODECS = { json: jsonCodec, binary: binaryCodec };
+const textEncoder = new TextEncoder();
+const sizeOf = (data) => (typeof data === "string" ? textEncoder.encode(data).byteLength : data.byteLength);
+
+// join/chat/netsim are always JSON text frames; input/ping go out in the
+// codec chosen at join, and state/pong come back in it.
 export class GameConnection {
   #socket = null;
   #listeners = new Map();
@@ -15,14 +23,19 @@ export class GameConnection {
 
   constructor({
     url = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`,
+    query = "",
+    codec = "binary",
     WebSocketCtor = WebSocket,
     maxReconnectAttempts = 8,
     joinTimeoutMs = 15000,
   } = {}) {
-    this.url = url;
+    this.url = `${url}${query}`;
+    this.codec = codec;
     this.WebSocketCtor = WebSocketCtor;
     this.maxReconnectAttempts = maxReconnectAttempts;
     this.joinTimeoutMs = joinTimeoutMs;
+    this.bytesIn = 0;
+    this.bytesOut = 0;
   }
 
   on(type, listener) {
@@ -39,9 +52,13 @@ export class GameConnection {
     for (const listener of this.#listeners.get(type) ?? []) listener(detail);
   }
 
+  get open() {
+    return this.#socket?.readyState === this.WebSocketCtor.OPEN;
+  }
+
   connect({ room, name }) {
     if (this.#joinPayload) return Promise.reject(new Error("Connection has already started"));
-    this.#joinPayload = { v: PROTOCOL_VERSION, type: "join", room, name };
+    this.#joinPayload = { type: "join", room, name, codec: this.codec };
     const joined = new Promise((resolve, reject) => {
       this.#joinResolve = resolve;
       this.#joinReject = reject;
@@ -55,21 +72,42 @@ export class GameConnection {
   }
 
   sendChat(text) {
-    return this.#send({ v: PROTOCOL_VERSION, type: "chat", text });
+    return this.#send({ type: "chat", text });
+  }
+
+  sendNetSim(conditions) {
+    return this.#send({ type: "netsim", ...conditions });
+  }
+
+  // Inputs and pings are real-time: never queued while disconnected.
+  sendInputs(inputs) {
+    return this.open && this.#write(CODECS[this.codec].encode({ type: "input", inputs }));
+  }
+
+  sendPing(t) {
+    return this.open && this.#write(CODECS[this.codec].encode({ type: "ping", t }));
   }
 
   #send(message) {
     if (this.#closed) return false;
-    if (this.#socket?.readyState === this.WebSocketCtor.OPEN) {
-      this.#socket.send(JSON.stringify(message));
-      return true;
-    }
+    if (this.open) return this.#write(jsonCodec.encode(message));
     if (this.#queue.length >= MAX_QUEUED_MESSAGES) {
       this.#emit("error", new Error("Outgoing message queue is full"));
       return false;
     }
     this.#queue.push(message);
     return true;
+  }
+
+  #write(payload) {
+    this.bytesOut += sizeOf(payload);
+    this.#socket.send(payload);
+    return true;
+  }
+
+  #decode(data) {
+    if (typeof data === "string") return jsonCodec.decode(data);
+    return binaryCodec.decode(data);
   }
 
   #open() {
@@ -81,25 +119,23 @@ export class GameConnection {
       this.#scheduleReconnect(error);
       return;
     }
+    socket.binaryType = "arraybuffer";
     this.#socket = socket;
     socket.addEventListener("open", () => {
       if (this.#socket !== socket || this.#closed) return;
       this.#attempt = 0;
-      socket.send(JSON.stringify(this.#joinPayload));
-      for (const message of this.#queue.splice(0)) socket.send(JSON.stringify(message));
+      this.#write(jsonCodec.encode(this.#joinPayload));
+      for (const message of this.#queue.splice(0)) this.#write(jsonCodec.encode(message));
       this.#emit("open");
     });
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket) return;
+      this.bytesIn += sizeOf(event.data);
       let message;
       try {
-        message = JSON.parse(event.data);
+        message = this.#decode(event.data);
       } catch (error) {
-        this.#emit("error", new Error("Server sent invalid JSON", { cause: error }));
-        return;
-      }
-      if (message.v !== PROTOCOL_VERSION || typeof message.type !== "string") {
-        this.#emit("error", new Error("Server sent an unsupported protocol message"));
+        this.#emit("error", new Error(`Server sent an unsupported message (protocol v${PROTOCOL_VERSION})`, { cause: error }));
         return;
       }
       if (message.type === "joined") {

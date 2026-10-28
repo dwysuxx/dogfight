@@ -1,18 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { Vector2 } from "../src/sim/vector.js";
-import { Entity } from "../src/sim/entity.js";
-import { World } from "../src/sim/world.js";
-import { Ship } from "../src/sim/ship.js";
-import { Bullet } from "../src/sim/bullet.js";
-import { Asteroid } from "../src/sim/asteroid.js";
-import { Pickup } from "../src/sim/pickup.js";
-import { withHoming } from "../src/sim/behaviors.js";
-import { findCollisions } from "../src/sim/collision.js";
-import { createGame } from "../src/sim/game.js";
-import { createRng } from "../src/sim/rng.js";
-import { botControls } from "../src/ai.js";
+import { Vector2 } from "../sim/vector.js";
+import { Entity } from "../sim/entity.js";
+import { World } from "../sim/world.js";
+import { Ship } from "../sim/ship.js";
+import { Bullet } from "../sim/bullet.js";
+import { Asteroid } from "../sim/asteroid.js";
+import { Pickup } from "../sim/pickup.js";
+import { withHoming } from "../sim/behaviors.js";
+import { findCollisions } from "../sim/collision.js";
+import { createGame } from "../sim/game.js";
+import { createRng } from "../sim/rng.js";
+import { botControls } from "../sim/ai.js";
 
 const DT = 1 / 60;
 const quietWorld = () => new World({ seed: 3 });

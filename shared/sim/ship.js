@@ -1,7 +1,8 @@
 import { Entity } from "./entity.js";
 import { Vector2 } from "./vector.js";
 import { Bullet } from "./bullet.js";
-import { withHoming } from "./behaviors.js";
+import { BULLET_HOMING, withHoming } from "./behaviors.js";
+import { wrapAngle } from "./math.js";
 
 const ROTATE_SPEED = Math.PI * 1.6; // rad/s
 const THRUST_ACCEL = 260; // px/s^2
@@ -30,8 +31,10 @@ export class Ship extends Entity {
     color = "#e8f0ff",
     name = "ship",
     damage = 20,
+    hp = Ship.MAX_HP,
   } = {}) {
     super({ kind: "ship", pos, angle, radius: 12 });
+    this.#hp = hp;
     this.name = name;
     this.color = color;
     this.damage = damage; // damage of this ship's bullets
@@ -41,6 +44,45 @@ export class Ship extends Entity {
     this.thrusting = false;
     this.fireCooldown = 0;
     this.contactCooldown = 0;
+    this.playerId = 0; // the room's small numeric player id (0 = bot / nobody)
+    this.isBot = false;
+  }
+
+  // `players` maps playerId -> { name, color } (the client's roster).
+  static fromSnapshot(data, { players } = {}) {
+    const player = players?.get(data.owner);
+    const ship = new Ship({
+      pos: new Vector2(data.x, data.y),
+      angle: data.angle,
+      hp: data.hp,
+      name: data.bot ? "bot" : (player?.name ?? "pilot"),
+      color: data.bot ? "#ff8a8a" : (player?.color ?? "#e8f0ff"),
+      damage: data.bot ? 10 : 20,
+    });
+    ship.id = data.id;
+    ship.vel.set(data.vx, data.vy);
+    ship.score = data.score;
+    ship.playerId = data.owner;
+    ship.isBot = data.bot;
+    ship.thrusting = data.thrusting;
+    ship.fireCooldown = data.fireCooldown;
+    for (const [name, left] of Object.entries(data.effects)) ship.effects.set(name, left);
+    return ship;
+  }
+
+  toSnapshot() {
+    return {
+      ...super.toSnapshot(),
+      vx: this.vel.x,
+      vy: this.vel.y,
+      hp: this.#hp,
+      score: this.score,
+      owner: this.playerId,
+      bot: this.isBot,
+      thrusting: this.thrusting,
+      fireCooldown: this.fireCooldown,
+      effects: Object.fromEntries(this.effects),
+    };
   }
 
   get hp() {
@@ -82,14 +124,10 @@ export class Ship extends Entity {
       owner: this,
       damage: this.damage,
     });
-    if (this.effects.has("homing")) {
-      withHoming(bullet, {
-        targets: ["ship", "asteroid"],
-        ignoreId: this.id,
-        range: 420,
-        turnRate: 3.2,
-      });
-    }
+    // The input that fired it: the client's predicted bullet and the server's
+    // authoritative one are matched by (owner, seq).
+    bullet.seq = this.controls.seq ?? 0;
+    if (this.effects.has("homing")) withHoming(bullet, { ...BULLET_HOMING, ignoreId: this.id });
     const spawned = this.world.spawn(bullet);
     this.world.emit("fired", { ship: this, bullet });
     return spawned;
@@ -99,6 +137,7 @@ export class Ship extends Entity {
     const c = this.controls;
     if (c.left) this.angle -= ROTATE_SPEED * dt;
     if (c.right) this.angle += ROTATE_SPEED * dt;
+    this.angle = wrapAngle(this.angle); // bounded, so it fits the Int16 wire format
 
     this.thrusting = c.thrust;
     if (c.thrust)

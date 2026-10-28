@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dogfight — Lab 3</title>
+    <title>Dogfight — Lab 5</title>
     <style>
       :root {
         color-scheme: dark;
@@ -96,8 +96,8 @@
       }
       #hud {
         position: fixed;
-        top: 8px;
-        left: 8px;
+        right: 8px;
+        bottom: 88px;
         color: #7cfc7c;
         font: 12px/1.4 "Courier New", monospace;
         background: rgba(0, 0, 0, 0.4);
@@ -105,6 +105,14 @@
         border-radius: 4px;
         pointer-events: none;
         white-space: pre;
+      }
+      #netgraph-plot {
+        position: fixed;
+        right: 8px;
+        bottom: 8px;
+        width: 360px;
+        height: 72px;
+        pointer-events: none;
       }
       #game-chat {
         position: fixed;
@@ -150,7 +158,8 @@
   </head>
   <body>
     <canvas id="game" hidden></canvas>
-    <div id="hud"></div>
+    <div id="hud" aria-label="Netgraph"></div>
+    <canvas id="netgraph-plot" width="360" height="72" hidden></canvas>
     <div id="game-hud"></div>
     <aside id="game-chat" hidden aria-label="Room chat">
       <strong id="room-roster">Connecting to room…</strong>

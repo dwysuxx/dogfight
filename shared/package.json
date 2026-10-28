@@ -1,0 +1,17 @@
+{
+  "name": "@dogfight/shared",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Simulation, protocol and codecs shared by the browser client and the Node server",
+  "exports": {
+    "./*": "./*"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "eslint sim protocol codec net test"
+  },
+  "devDependencies": {
+    "eslint": "^9.9.0"
+  }
+}
