@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateNetSim } from "./netsim.js";
 
 const SERVER_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -18,14 +19,28 @@ export function loadConfig(env = process.env) {
   const maxRooms = integerSetting(env, "MAX_ROOMS", 100, { min: 2 });
   const maxPlayersPerRoom = integerSetting(env, "MAX_PLAYERS_PER_ROOM", 16);
   const maxPayload = integerSetting(env, "MAX_PAYLOAD", 16 * 1024, { min: 256 });
-  const maxMessagesPerSecond = integerSetting(env, "MAX_MESSAGES_PER_SECOND", 20);
+  // Inputs alone are 30/s (one per tick), plus pings and chat.
+  const maxMessagesPerSecond = integerSetting(env, "MAX_MESSAGES_PER_SECOND", 60);
   const slowClientBytes = integerSetting(env, "SLOW_CLIENT_BYTES", 512 * 1024);
   const logDir = resolve(SERVER_ROOT, env.LOG_DIR || "logs");
   const clientDist = resolve(SERVER_ROOT, "../client/dist");
   const joinTimeoutMs = integerSetting(env, "JOIN_TIMEOUT_MS", 5000);
   const heartbeatMs = integerSetting(env, "HEARTBEAT_MS", 15000);
 
-  if (!host || /[\s/\\]/.test(host)) throw new TypeError("HOST must be a hostname or IP address");
+  // Default network conditions for every connection; each connection can
+  // override them with ?lag=&jitter=&drop= on the WebSocket URL or a netsim message.
+  let netsim;
+  try {
+    netsim = validateNetSim({
+      lag: env.NET_LAG_MS || 0,
+      jitter: env.NET_JITTER_MS || 0,
+      drop: env.NET_DROP || 0,
+    });
+  } catch (error) {
+    throw new RangeError(`NET_LAG_MS / NET_JITTER_MS / NET_DROP: ${error.message}`);
+  }
+
+  if (!host ||/[\s/\\]/.test(host)) throw new TypeError("HOST must be a hostname or IP address");
 
   return {
     host,
@@ -39,5 +54,6 @@ export function loadConfig(env = process.env) {
     clientDist,
     joinTimeoutMs,
     heartbeatMs,
+    netsim,
   };
 }

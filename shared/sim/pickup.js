@@ -1,4 +1,5 @@
 import { Entity } from "./entity.js";
+import { Vector2 } from "./vector.js";
 
 // What each pickup does is DATA (a row in this table), not a subclass.
 export const EFFECTS = {
@@ -15,6 +16,16 @@ export class Pickup extends Entity {
     super({ kind: "pickup", pos, radius: 11 });
     this.effect = effect;
     this.ttl = ttl;
+  }
+
+  static fromSnapshot(data) {
+    const pickup = new Pickup({ pos: new Vector2(data.x, data.y), effect: data.effect });
+    pickup.id = data.id;
+    return pickup;
+  }
+
+  toSnapshot() {
+    return { ...super.toSnapshot(), effect: this.effect };
   }
 
   apply(ship) {

@@ -1,9 +1,9 @@
 // A runnable demonstration of the `this` bug (Section 2 of the notes).
 //   Node:     node src/demo/this-bug.js
 //   Browser:  await import("./src/demo/this-bug.js")   (in the DevTools console)
-import { World } from "../sim/world.js";
-import { Ship } from "../sim/ship.js";
-import { Vector2 } from "../sim/vector.js";
+import { World } from "@dogfight/shared/sim/world.js";
+import { Ship } from "@dogfight/shared/sim/ship.js";
+import { Vector2 } from "@dogfight/shared/sim/vector.js";
 
 function freshShip() {
   const world = new World();

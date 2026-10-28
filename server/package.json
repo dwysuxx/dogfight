@@ -10,7 +10,8 @@
     "lint": "eslint src test"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@dogfight/shared": "*"
   },
   "devDependencies": {
     "eslint": "^9.9.0"

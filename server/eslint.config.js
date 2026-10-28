@@ -15,6 +15,10 @@ export default [
         clearInterval: "readonly",
         clearTimeout: "readonly",
         URL: "readonly",
+        TextEncoder: "readonly",
+        EventTarget: "readonly",
+        CustomEvent: "readonly",
+        clearImmediate: "readonly",
       },
     },
     rules: {

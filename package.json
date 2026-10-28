@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
+    "shared",
     "client",
     "server"
   ],
@@ -16,7 +17,8 @@
     "start": "node --env-file-if-exists=.env server/src/index.js",
     "build": "npm run build --workspace client",
     "test": "node --test",
-    "lint": "npm run lint --workspace client && npm run lint --workspace server",
-    "benchmark": "node server/src/log/benchmark.js"
+    "lint": "npm run lint --workspace shared && npm run lint --workspace client && npm run lint --workspace server",
+    "benchmark": "node server/src/log/benchmark.js",
+    "netbench": "node server/src/tools/netbench.js"
   }
 }

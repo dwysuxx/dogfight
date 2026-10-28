@@ -3,7 +3,7 @@
 // A behavior is a plain object like { type: "homing", targets: [...], ... }
 // pushed onto `entity.behaviors`. The code that runs it lives in the registry
 // below. Any entity — a bullet, an asteroid, tomorrow a missile — can get any
-// behavior without a class hierarchy, and the data is serialisable (Lab 5).
+// behavior without a class hierarchy, and the data is safe to serialize.
 import { Vector2 } from "./vector.js";
 import { clamp, wrapAngle } from "./math.js";
 
@@ -41,6 +41,13 @@ function steerHoming(entity, cfg, dt) {
   const turn = clamp(wrapAngle(desired - heading), -maxTurn, maxTurn);
   entity.vel = Vector2.fromAngle(heading + turn, speed);
 }
+
+// What a ship with the homing pickup gives its bullets.
+export const BULLET_HOMING = Object.freeze({
+  targets: ["ship", "asteroid"],
+  range: 420,
+  turnRate: 3.2,
+});
 
 // The "mixin" helper: attach homing to ANY entity.
 export function withHoming(

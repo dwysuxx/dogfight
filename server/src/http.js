@@ -117,6 +117,8 @@ export async function createApp(config, { logger = console } = {}) {
   });
   rooms.on("error", (error) => logger.error("Room manager error:", error));
 
+  let wsHandlers = null;
+  const startedAt = Date.now();
   const realDistRoot = await realpath(config.clientDist).catch((error) => {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -139,6 +141,12 @@ export async function createApp(config, { logger = console } = {}) {
       }
       if (request.method === "GET" && url.pathname === "/api/rooms")
         return sendJson(response, 200, { rooms: rooms.list() });
+      if (request.method === "GET" && url.pathname === "/api/stats")
+        return sendJson(response, 200, {
+          uptimeSeconds: (Date.now() - startedAt) / 1000,
+          memory: process.memoryUsage(),
+          ...wsHandlers.stats(),
+        });
       if (request.method === "POST" && url.pathname === "/api/rooms") {
         let room;
         try {
@@ -221,7 +229,7 @@ export async function createApp(config, { logger = console } = {}) {
       wss.emit("connection", webSocket, request);
     });
   });
-  attachWebSocketHandlers(wss, rooms, config, logger);
+  wsHandlers = attachWebSocketHandlers(wss, rooms, config, logger);
 
   let closed = false;
   return {
@@ -240,6 +248,7 @@ export async function createApp(config, { logger = console } = {}) {
         else
           socket.terminate();
       }
+      wsHandlers.close();
       await new Promise((resolveClose) => wss.close(resolveClose));
       await serverClosed;
       await logStore.close();

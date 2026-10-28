@@ -1,4 +1,4 @@
-import { wrapAngle } from "./sim/math.js";
+import { wrapAngle } from "./math.js";
 
 const IDLE = Object.freeze({ left: false, right: false, thrust: false, fire: false });
 

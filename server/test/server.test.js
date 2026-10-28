@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { test } from "node:test";
 import WebSocket from "ws";
+import * as binaryCodec from "@dogfight/shared/codec/binary.js";
 import { loadConfig } from "../src/config.js";
 import { createApp } from "../src/http.js";
 import { MatchLogStore } from "../src/log/matchlog.js";
@@ -63,14 +64,30 @@ test("config validates environment values and resolves paths", () => {
   assert.throws(() => loadConfig({ MAX_ROOMS: "1" }), /MAX_ROOMS must be an integer/);
 });
 
-test("protocol accepts versioned join/chat and rejects malformed or unknown messages", () => {
-  assert.equal(validateClientMessage({ v: PROTOCOL_VERSION, type: "join", room: "orbit", name: "Ada" }).ok, true);
-  assert.deepEqual(validateClientMessage({ v: 0, type: "chat", text: " hi " }).message.text, "hi");
-  assert.equal(validateClientMessage({ v: 3, type: "join", room: "orbit", name: "Ada" }).code, "unsupported-version");
-  assert.equal(validateClientMessage({ v: 0, type: "join", room: "../secrets", name: "Ada" }).ok, false);
-  assert.equal(validateClientMessage({ v: 0, type: "chat", text: "x".repeat(501) }).ok, false);
-  assert.equal(validateClientMessage({ v: 0, type: "chat", text: "hello", extra: true }).ok, false);
-  assert.equal(validateClientMessage({ v: 0, type: "wat" }).code, "unknown-type");
+test("protocol accepts versioned join/chat/input/ping and rejects malformed or unknown messages", () => {
+  const v = PROTOCOL_VERSION;
+  assert.equal(validateClientMessage({ v, type: "join", room: "orbit", name: "Ada" }).message.codec, "json");
+  assert.equal(validateClientMessage({ v, type: "join", room: "orbit", name: "Ada", codec: "binary" }).ok, true);
+  assert.equal(validateClientMessage({ v, type: "join", room: "orbit", name: "Ada", codec: "xml" }).ok, false);
+  assert.deepEqual(validateClientMessage({ v, type: "chat", text: " hi " }).message.text, "hi");
+  assert.equal(validateClientMessage({ v: 99, type: "join", room: "orbit", name: "Ada" }).code, "unsupported-version");
+  assert.equal(validateClientMessage({ v, type: "join", room: "../secrets", name: "Ada" }).ok, false);
+  assert.equal(validateClientMessage({ v, type: "chat", text: "x".repeat(501) }).ok, false);
+  assert.equal(validateClientMessage({ v, type: "chat", text: "hello", extra: true }).ok, false);
+  const input = (inputs) => validateClientMessage({ v, type: "input", inputs });
+  const thrust = { left: false, right: false, thrust: true, fire: false };
+  assert.equal(input([{ seq: 7, controls: thrust }, { seq: 8, controls: thrust }]).ok, true);
+  assert.equal(input([{ seq: 7, controls: thrust }, { seq: 9, controls: thrust }]).code, "invalid-input", "gap");
+  assert.equal(input([{ seq: 1, controls: { thrust: true } }]).code, "invalid-input");
+  assert.equal(input([{ seq: 1, controls: { ...thrust, turn: 1000 } }]).code, "invalid-input", "cheat field");
+  assert.equal(input([{ seq: 1.5, controls: thrust }]).code, "invalid-input");
+  assert.equal(input([]).code, "invalid-input");
+  assert.equal(input(Array.from({ length: 5 }, (_, i) => ({ seq: i + 1, controls: thrust }))).ok, false);
+  assert.equal(validateClientMessage({ v, type: "ping", t: 12.5 }).ok, true);
+  assert.equal(validateClientMessage({ v, type: "ping", t: "now" }).ok, false);
+  assert.equal(validateClientMessage({ v, type: "netsim", lag: 100, jitter: 20, drop: 0.02 }).ok, true);
+  assert.equal(validateClientMessage({ v, type: "netsim", lag: 100, jitter: 20, drop: 0.9 }).ok, false);
+  assert.equal(validateClientMessage({ v, type: "wat" }).code, "unknown-type");
 });
 
 test("Room EventEmitter emits ordered events and RoomManager caps and removes rooms", () => {
@@ -178,6 +195,47 @@ test("HTTP API, safe static files, request caps, and streamed replay work", asyn
   assert.equal((await fetch(`${base}/api/replays/../../secrets`)).status, 404);
 });
 
+// Waits for the next message matching `predicate` (JSON text frames are
+// parsed; binary frames are decoded with the shared binary codec).
+function nextMessage(socket, predicate, timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for WebSocket message"));
+    }, timeoutMs);
+    const onMessage = (raw, isBinary) => {
+      const message = isBinary ? binaryCodec.decode(raw) : JSON.parse(raw.toString());
+      if (!predicate(message)) return;
+      cleanup();
+      resolve(message);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("WebSocket closed before expected message"));
+    };
+    function cleanup() {
+      clearTimeout(timeout);
+      socket.off("message", onMessage);
+      socket.off("close", onClose);
+    }
+    socket.on("message", onMessage);
+    socket.once("close", onClose);
+  });
+}
+
+const ofType = (type) => (message) => message.type === type;
+
+async function joinRoom(ws, sockets, { name, room = "orbit", codec, query = "" }) {
+  const socket = new WebSocket(`${ws}${query}`);
+  sockets.push(socket);
+  await once(socket, "open");
+  const joined = nextMessage(socket, ofType("joined"));
+  socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room, name, ...(codec ? { codec } : {}) }));
+  return { socket, joined: await joined };
+}
+
+const controls = (overrides = {}) => ({ left: false, right: false, thrust: false, fire: false, ...overrides });
+
 test("WebSocket clients join, receive roster and chat, and leave cleanly", async (t) => {
   const directory = await createTempDirectory();
   const { app, ws } = await startApp(directory);
@@ -187,30 +245,147 @@ test("WebSocket clients join, receive roster and chat, and leave cleanly", async
     await rm(directory, { recursive: true, force: true });
   });
 
-  async function join(name) {
-    const socket = new WebSocket(ws);
-    sockets.push(socket);
-    await once(socket, "open");
-    const joinedMessage = once(socket, "message");
-    socket.send(JSON.stringify({ v: 0, type: "join", room: "orbit", name }));
-    const [joinedRaw] = await joinedMessage;
-    assert.equal(JSON.parse(joinedRaw.toString()).type, "joined");
-    return socket;
+  const first = await joinRoom(ws, sockets, { name: "Ada" });
+  assert.equal(first.joined.player.playerId, 1);
+  assert.equal(first.joined.tickRate, 30);
+  const roster = nextMessage(first.socket, (m) => m.type === "roster" && m.players.length === 2);
+  const second = await joinRoom(ws, sockets, { name: "Lin" });
+  assert.equal(second.joined.player.playerId, 2);
+  assert.deepEqual((await roster).players.map((player) => player.name), ["Ada", "Lin"]);
+
+  const firstChat = nextMessage(first.socket, ofType("chat"));
+  const secondChat = nextMessage(second.socket, ofType("chat"));
+  second.socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "chat", text: "Hello, Ada!" }));
+  assert.equal((await firstChat).text, "Hello, Ada!");
+  assert.equal((await secondChat).player.name, "Lin");
+
+  const afterLeave = nextMessage(first.socket, (m) => m.type === "roster" && m.players.length === 1);
+  second.socket.close();
+  assert.deepEqual((await afterLeave).players.map((player) => player.name), ["Ada"]);
+});
+
+test("the authoritative match applies seq-numbered inputs and acks them per client", async (t) => {
+  const directory = await createTempDirectory();
+  const { app, ws } = await startApp(directory);
+  const sockets = [];
+  t.after(async () => {
+    await closeApp(app, sockets);
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const first = await joinRoom(ws, sockets, { name: "Ada", codec: "json" });
+  const second = await joinRoom(ws, sockets, { name: "Lin", codec: "json" });
+  const firstId = first.joined.player.playerId;
+
+  // Both clients receive the same world for the same tick; only ack differs.
+  const firstStates = new Map();
+  const secondStates = new Map();
+  first.socket.on("message", (raw) => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === "state") firstStates.set(message.tick, message);
+  });
+  second.socket.on("message", (raw) => {
+    const message = JSON.parse(raw.toString());
+    if (message.type === "state") secondStates.set(message.tick, message);
+  });
+  const sameTick = async () => {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const tick = [...firstStates.keys()].find((key) => secondStates.has(key));
+      if (tick !== undefined) return [firstStates.get(tick), secondStates.get(tick)];
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("No common tick");
+  };
+  const [a, b] = await sameTick();
+  assert.deepEqual(a.entities, b.entities);
+  const ships = a.entities.filter((e) => e.kind === "ship");
+  assert.equal(ships.filter((ship) => ship.bot).length, 1);
+  assert.deepEqual(ships.filter((ship) => !ship.bot).map((ship) => ship.owner).sort(), [1, 2]);
+  assert.ok(a.entities.every((e) => Number.isInteger(e.id) && e.id <= 0xffff), "u16 entity ids");
+  const start = ships.find((ship) => ship.owner === firstId);
+
+  // 12 thrust inputs, sent the way the client does: each message repeats the
+  // last few (redundancy), the server must apply each seq exactly once.
+  const inputs = [];
+  for (let seq = 1; seq <= 12; seq++) {
+    inputs.push({ seq, controls: controls({ thrust: true }) });
+    first.socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "input", inputs: inputs.slice(-4) }));
   }
+  const thrusted = await nextMessage(first.socket, (m) => m.type === "state" && m.ack === 12);
+  const moved = thrusted.entities.find((e) => e.kind === "ship" && e.owner === firstId);
+  assert.ok(Math.hypot(moved.x - start.x, moved.y - start.y) > 2, "the ship moved under thrust");
+  const otherView = await nextMessage(second.socket, (m) => m.type === "state" && m.tick >= thrusted.tick);
+  assert.equal(otherView.ack, 0, "acks are per client");
 
-  const first = await join("Ada");
-  const roster = once(first, "message");
-  const second = await join("Lin");
-  const [rosterRaw] = await roster;
-  assert.deepEqual(JSON.parse(rosterRaw.toString()).players.map((player) => player.name), ["Ada", "Lin"]);
+  first.socket.send(
+    JSON.stringify({ v: PROTOCOL_VERSION, type: "input", inputs: [{ seq: 13, controls: controls({ fire: true }) }] }),
+  );
+  const fired = await nextMessage(
+    second.socket,
+    (m) => m.type === "state" && m.entities.some((e) => e.kind === "bullet" && e.owner === firstId),
+  );
+  const bullet = fired.entities.find((e) => e.kind === "bullet" && e.owner === firstId);
+  assert.equal(bullet.seq, 13, "the bullet carries the seq of the input that fired it");
 
-  const firstChat = once(first, "message");
-  const secondChat = once(second, "message");
-  second.send(JSON.stringify({ v: 0, type: "chat", text: "Hello, Ada!" }));
-  const [firstRaw] = await firstChat;
-  const [secondRaw] = await secondChat;
-  assert.equal(JSON.parse(firstRaw.toString()).text, "Hello, Ada!");
-  assert.equal(JSON.parse(secondRaw.toString()).player.name, "Lin");
+  const stats = await (await fetch(`${ws.replace("ws:", "http:").replace("/ws", "")}/api/stats`)).json();
+  const orbit = stats.matches.find((match) => match.room === "orbit");
+  assert.equal(orbit.ticker.rate, 30);
+  assert.equal(orbit.players, 2);
+  assert.ok(orbit.inputs.inputsApplied >= 13);
+});
+
+test("binary clients get DataView snapshots and can send binary inputs and pings", async (t) => {
+  const directory = await createTempDirectory();
+  const { app, ws } = await startApp(directory);
+  const sockets = [];
+  t.after(async () => {
+    await closeApp(app, sockets);
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const { socket, joined } = await joinRoom(ws, sockets, { name: "Bin", room: "deep-field", codec: "binary" });
+  const state = await nextMessage(socket, ofType("state"));
+  assert.ok(state.entities.some((e) => e.kind === "ship" && e.owner === joined.player.playerId));
+  assert.ok(state.entities.some((e) => e.kind === "asteroid" && e.shape.length === 11));
+
+  socket.send(binaryCodec.encode({ type: "input", inputs: [{ seq: 1, controls: controls({ right: true }) }] }));
+  const acked = await nextMessage(socket, (m) => m.type === "state" && m.ack === 1);
+  assert.equal(acked.type, "state");
+
+  socket.send(binaryCodec.encode({ type: "ping", t: 1234.5 }));
+  const pong = await nextMessage(socket, ofType("pong"));
+  assert.equal(pong.t, 1234.5);
+  assert.ok(pong.tick > 0);
+
+  const closed = once(socket, "close");
+  socket.send(Uint8Array.of(1, PROTOCOL_VERSION, 1, 1, 0, 0, 0, 0xff)); // reserved input bits set
+  assert.equal((await closed)[0], 1008);
+});
+
+test("the latency injector delays both directions of one connection", async (t) => {
+  const directory = await createTempDirectory();
+  const { app, ws } = await startApp(directory);
+  const sockets = [];
+  t.after(async () => {
+    await closeApp(app, sockets);
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const { socket, joined } = await joinRoom(ws, sockets, { name: "Laggy", query: "?lag=60" });
+  assert.deepEqual(joined.netsim, { lag: 60, jitter: 0, drop: 0 });
+  const sentAt = performance.now();
+  socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "ping", t: sentAt }));
+  await nextMessage(socket, ofType("pong"));
+  assert.ok(performance.now() - sentAt >= 115, "60 ms each way");
+
+  socket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "netsim", lag: 0, jitter: 0, drop: 0 }));
+  const conditions = await nextMessage(socket, ofType("netsim"));
+  assert.equal(conditions.lag, 0);
+
+  const rejected = new WebSocket(`${ws}?drop=2`);
+  sockets.push(rejected);
+  rejected.on("error", () => {});
+  assert.equal((await once(rejected, "close"))[0], 1008);
 });
 
 test("WebSocket rejects unjoined clients and clients that miss the join deadline", async (t) => {
@@ -247,7 +422,7 @@ test("WebSocket heartbeat pings live clients and maxPayload closes oversized fra
   live.on("error", () => {});
   await once(live, "open");
   const joined = once(live, "message");
-  live.send(JSON.stringify({ v: 0, type: "join", room: "orbit", name: "Heartbeat" }));
+  live.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room: "orbit", name: "Heartbeat" }));
   assert.equal(JSON.parse((await joined)[0].toString()).type, "joined");
   await once(live, "ping");
   assert.equal(live.readyState, WebSocket.OPEN);
@@ -257,7 +432,7 @@ test("WebSocket heartbeat pings live clients and maxPayload closes oversized fra
   oversized.on("error", () => {});
   await once(oversized, "open");
   const closed = once(oversized, "close");
-  oversized.send(JSON.stringify({ v: 0, type: "chat", text: "x".repeat(2048) }));
+  oversized.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "chat", text: "x".repeat(2048) }));
   assert.equal((await closed)[0], 1009);
 });
 
@@ -278,7 +453,7 @@ test("WebSocket validates every message and enforces rate and room caps", async 
   sockets.push(first);
   await once(first, "open");
   const joined = once(first, "message");
-  first.send(JSON.stringify({ v: 0, type: "join", room: "orbit", name: "Ada" }));
+  first.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room: "orbit", name: "Ada" }));
   assert.equal(JSON.parse((await joined)[0].toString()).type, "joined");
 
   const second = new WebSocket(ws);
@@ -286,7 +461,7 @@ test("WebSocket validates every message and enforces rate and room caps", async 
   await once(second, "open");
   const fullError = once(second, "message");
   const fullClose = once(second, "close");
-  second.send(JSON.stringify({ v: 0, type: "join", room: "orbit", name: "Lin" }));
+  second.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room: "orbit", name: "Lin" }));
   assert.equal(JSON.parse((await fullError)[0].toString()).code, "room-full");
   assert.equal((await fullClose)[0], 1008);
 
@@ -294,7 +469,7 @@ test("WebSocket validates every message and enforces rate and room caps", async 
   sockets.push(malformedSocket);
   await once(malformedSocket, "open");
   const invalidError = once(malformedSocket, "message");
-  malformedSocket.send(JSON.stringify({ v: 0, type: "join", room: "orbit", name: "Eve", admin: true }));
+  malformedSocket.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room: "orbit", name: "Eve", admin: true }));
   assert.equal(JSON.parse((await invalidError)[0].toString()).code, "invalid-join");
 
   const roomCap = await fetch(`${base}/api/rooms`, {
@@ -308,14 +483,14 @@ test("WebSocket validates every message and enforces rate and room caps", async 
   sockets.push(rateLimited);
   await once(rateLimited, "open");
   const rateJoined = once(rateLimited, "message");
-  rateLimited.send(JSON.stringify({ v: 0, type: "join", room: "deep-field", name: "Rate test" }));
+  rateLimited.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "join", room: "deep-field", name: "Rate test" }));
   assert.equal(JSON.parse((await rateJoined)[0].toString()).type, "joined");
-  const firstChat = once(rateLimited, "message");
-  rateLimited.send(JSON.stringify({ v: 0, type: "chat", text: "first" }));
-  assert.equal(JSON.parse((await firstChat)[0].toString()).type, "chat");
-  const rateError = once(rateLimited, "message");
-  rateLimited.send(JSON.stringify({ v: 0, type: "chat", text: "second" }));
-  assert.equal(JSON.parse((await rateError)[0].toString()).code, "rate-limit");
+  const firstChat = nextMessage(rateLimited, ofType("chat"));
+  rateLimited.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "chat", text: "first" }));
+  assert.equal((await firstChat).text, "first");
+  const rateError = nextMessage(rateLimited, ofType("error"));
+  rateLimited.send(JSON.stringify({ v: PROTOCOL_VERSION, type: "chat", text: "second" }));
+  assert.equal((await rateError).code, "rate-limit");
 });
 
 test("HTTP rejects a symlink that escapes the static root", async (t) => {

@@ -1,6 +1,6 @@
 // Seeded PRNG (mulberry32). The simulation never calls Math.random(), so the
 // same seed + the same inputs always produce the same game — the property
-// Lab 5 (multiplayer) depends on.
+// the shared server-authoritative simulation depends on.
 export function createRng(seed = 1) {
   let s = seed >>> 0;
   const next = () => {

@@ -1,0 +1,96 @@
+// The netgraph: the instrument for the whole lab. Text readouts plus a plot
+// of the last ~4 s: reconciliation correction per snapshot (bars) and the
+// round-trip time (line).
+const HISTORY = 120;
+const PRESETS = [
+  { label: "off", lag: 0, jitter: 0, drop: 0 },
+  { label: "~100 ms RTT ±30, 2% drop", lag: 50, jitter: 30, drop: 0.02 },
+  { label: "~200 ms RTT ±60, 2% drop", lag: 100, jitter: 60, drop: 0.02 },
+  { label: "~300 ms RTT ±100, 5% drop", lag: 150, jitter: 100, drop: 0.05 },
+];
+
+const fmt = (value, digits = 0, unit = "") =>
+  value === null || value === undefined || Number.isNaN(value) ? "–" : `${value.toFixed(digits)}${unit}`;
+
+export function createNetgraph({ text, canvas, session }) {
+  const ctx = canvas.getContext("2d");
+  const corrections = [];
+  const rtts = [];
+  let visible = true;
+  let presetIndex = 0;
+  let lastRttSample = null;
+
+  session.addEventListener("correction", ({ detail }) => {
+    corrections.push(detail);
+    if (corrections.length > HISTORY) corrections.shift();
+  });
+
+  function plot(stats) {
+    if (stats.rtt !== lastRttSample && stats.rtt !== null) {
+      lastRttSample = stats.rtt;
+      rtts.push(stats.rtt);
+      if (rtts.length > HISTORY / 4) rtts.shift();
+    }
+    const { width, height } = canvas;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+    ctx.fillRect(0, 0, width, height);
+
+    // correction bars, 0..20 px full scale (clipped)
+    const barWidth = width / HISTORY;
+    corrections.forEach((value, i) => {
+      const h = Math.min(1, value / 20) * (height - 4);
+      ctx.fillStyle = value > 5 ? "#ff6b6b" : value > 0.5 ? "#ffd84a" : "#7cfc7c";
+      ctx.fillRect(i * barWidth, height - h, Math.max(1, barWidth - 0.5), Math.max(1, h));
+    });
+
+    // RTT line, 0..400 ms full scale
+    ctx.strokeStyle = "#6de0df";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    rtts.forEach((value, i) => {
+      const x = (i / Math.max(1, HISTORY / 4 - 1)) * width;
+      const y = height - Math.min(1, value / 400) * (height - 4) - 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  return {
+    update(loopStats) {
+      text.hidden = canvas.hidden = !visible;
+      if (!visible) return;
+      const s = session.sampleStats(performance.now());
+      const netsim = s.netsim ? `${s.netsim.lag}±${s.netsim.jitter} ms/dir, drop ${(s.netsim.drop * 100).toFixed(0)}%` : "–";
+      text.textContent = [
+        `fps ${loopStats.framesPerSecond}  steps/s ${loopStats.stepsPerSecond}  frame ${fmt(loopStats.lastFrameDuration, 1)} ms`,
+        `rtt ${fmt(s.rtt, 0, " ms")}  (avg ${fmt(s.rttAvg, 0)})   codec ${s.codec}`,
+        `snapshots ${s.snapshotsPerSecond}/s  age ${fmt(s.snapshotAge, 0, " ms")}  tick ${s.serverTick}`,
+        `down ${fmt(s.bytesInPerSecond / 1024, 2)} KB/s  up ${fmt(s.bytesOutPerSecond / 1024, 2)} KB/s`,
+        `pending inputs ${s.pendingInputs}`,
+        `correction ${fmt(s.correction, 2, " px")}  max/1s ${fmt(s.correctionMax, 2)}  avg ${fmt(s.correctionAvg, 2)}`,
+        `interp delay ${fmt(s.interpolationDelayMs, 0, " ms")} [ ]   ${fmt(s.renderTicksBehind, 1)} ticks behind`,
+        `prediction ${s.prediction ? "on" : "OFF"} (P)  interpolation ${s.interpolation ? "on" : "OFF"} (I)`,
+        `netsim ${netsim} (L)   hide: N`,
+      ].join("\n");
+      plot(s);
+    },
+    // Returns true when the key was a netgraph key.
+    handleKey(code) {
+      if (code === "KeyN") visible = !visible;
+      else if (code === "BracketLeft")
+        session.buffer.interpolationDelayMs = Math.max(0, session.buffer.interpolationDelayMs - 16);
+      else if (code === "BracketRight")
+        session.buffer.interpolationDelayMs = Math.min(400, session.buffer.interpolationDelayMs + 16);
+      else if (code === "KeyP") session.prediction = !session.prediction;
+      else if (code === "KeyI") session.interpolation = !session.interpolation;
+      else if (code === "KeyL") {
+        presetIndex = (presetIndex + 1) % PRESETS.length;
+        const { lag, jitter, drop } = PRESETS[presetIndex];
+        session.setNetSim({ lag, jitter, drop });
+      } else return false;
+      return true;
+    },
+  };
+}
