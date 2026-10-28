@@ -9,16 +9,24 @@
     "server"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "scripts": {
-    "dev": "node --watch --env-file-if-exists=.env server/src/index.js",
+    "dev": "node --watch --env-file-if-exists=.env server/src/index.ts",
     "dev:client": "npm run dev --workspace client",
-    "start": "node --env-file-if-exists=.env server/src/index.js",
+    "start": "node --env-file-if-exists=.env server/src/index.ts",
     "build": "npm run build --workspace client",
+    "typecheck": "npm run typecheck --workspaces",
     "test": "node --test",
-    "lint": "npm run lint --workspace shared && npm run lint --workspace client && npm run lint --workspace server",
-    "benchmark": "node server/src/log/benchmark.js",
-    "netbench": "node server/src/tools/netbench.js"
+    "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "benchmark": "node server/src/log/benchmark.ts",
+    "netbench": "node server/src/tools/netbench.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "eslint": "^9.39.5",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1"
   }
 }

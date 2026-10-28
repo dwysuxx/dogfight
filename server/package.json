@@ -4,16 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "start": "node --env-file-if-exists=../.env src/index.js",
-    "dev": "node --watch --env-file-if-exists=../.env src/index.js",
+    "start": "node --env-file-if-exists=../.env src/index.ts",
+    "dev": "node --watch --env-file-if-exists=../.env src/index.ts",
     "test": "node --test",
-    "lint": "eslint src test"
+    "typecheck": "tsc -p . --noEmit",
+    "lint": "eslint ."
   },
   "dependencies": {
-    "ws": "^8.18.0",
-    "@dogfight/shared": "*"
+    "@dogfight/shared": "*",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
-    "eslint": "^9.9.0"
+    "@types/ws": "^8.18.2"
   }
 }
