@@ -142,10 +142,11 @@ function drawPickup(ctx: Ctx, p: Pickup): void {
 function drawExplosion(ctx: Ctx, e: Explosion, _alpha: number): void {
   ctx.save();
   ctx.fillStyle = e.color;
-  for (const p of e.particles) {
-    if (p.life <= 0) continue;
-    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
-    ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  for (let i = 0; i < e.particleCount; i++) {
+    const life = e.particleLife(i);
+    if (life <= 0) continue;
+    ctx.globalAlpha = life;
+    ctx.fillRect(e.particleX(i) - 1.5, e.particleY(i) - 1.5, 3, 3);
   }
   ctx.restore();
 }

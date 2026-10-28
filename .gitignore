@@ -3,3 +3,7 @@ client/dist/
 server/logs/
 .env
 *.tmp
+coverage/
+playwright-report/
+test-results/
+bench/profiles/*.heapprofile

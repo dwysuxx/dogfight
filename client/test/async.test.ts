@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import type { RoomInfo } from "@dogfight/shared/protocol.ts";
@@ -34,6 +34,11 @@ const room = (id: string, name: string): RoomInfo => ({
   capacity: 4,
   arena: { width: 960, height: 540, asteroids: 6 },
 });
+
+const reasonOf = (signal: AbortSignal): Error => {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error ? reason : new Error(String(reason));
+};
 
 const signalOf = (init: RequestInitLike | undefined): AbortSignal => {
   assert.ok(init?.signal, "request carries an AbortSignal");
@@ -155,7 +160,7 @@ test("Lobby polling aborts its in-flight fetch when polling stops", async () => 
           "abort",
           () => {
             seen.rejected = true;
-            reject(signal.reason);
+            reject(reasonOf(signal));
           },
           { once: true },
         );
@@ -193,7 +198,7 @@ test("Lobby requests time out and surface an AbortError", async () => {
     fetchImpl: (_url, init) =>
       new Promise((_resolve, reject) => {
         const signal = signalOf(init);
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        signal.addEventListener("abort", () => reject(reasonOf(signal)), { once: true });
       }),
   });
   const keepAlive = setTimeout(() => {}, 20);

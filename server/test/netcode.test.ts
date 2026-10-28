@@ -1,5 +1,5 @@
 // Headless netcode regression test (see src/tools/headless.ts).
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { type NetcodeOptions, type PilotResult, runNetcode } from "../src/tools/headless.ts";
 

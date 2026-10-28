@@ -3,6 +3,7 @@ import type { Ship } from "@dogfight/shared/sim/ship.ts";
 import { type Assets, fetchJson, loadAll, withRetry } from "./assets/loader.ts";
 import { type GameAudio, createAudio } from "./audio.ts";
 import { GameConnection } from "./connection.ts";
+import { exposeDebug } from "./debug.ts";
 import "./determinism.ts";
 import { byId, errorMessage, storage } from "./dom.ts";
 import { type Input, createInput, readControls } from "./input.ts";
@@ -11,6 +12,7 @@ import { createLobbyView } from "./lobby/view.ts";
 import { type Loop, createLoop } from "./loop.ts";
 import { type Netgraph, createNetgraph } from "./net/netgraph.ts";
 import { GameSession } from "./net/session.ts";
+import { FrameTimes, flushSpans, spanEnd, spanStart } from "./perf.ts";
 import { setupCanvas } from "./render/canvas.ts";
 import { drawEntity, drawGameHud, drawGrid } from "./render/draw.ts";
 
@@ -94,7 +96,12 @@ function showLoadingError(error: unknown): void {
   backButton.hidden = false;
 }
 
+let hudUpdatedAt = 0;
 function renderGameHud(session: GameSession): void {
+  // A DOM text update is a layout + a string build; 10 Hz is plenty for a HUD.
+  const now = performance.now();
+  if (now - hudUpdatedAt < 100) return;
+  hudUpdatedAt = now;
   const { player, bot } = session.hudState();
   if (!player) {
     gameHud.textContent = session.latestState ? "destroyed - respawning..." : "Waiting for game state…";
@@ -238,20 +245,31 @@ async function startGame({ room, playerName }: { room: RoomInfo; playerName: str
     );
 
     let lastFrame = performance.now();
+    const frameIntervals = new FrameTimes(); // rAF to rAF
+    const frameWork = new FrameTimes(); // our JavaScript per frame
     const loop = createLoop({
       // The client steps at the server's tick rate: one input per tick, the
       // same dt, so a predicted step and a server step are the same function.
       step: TICK_SECONDS,
       simulate() {
+        spanStart("simulate");
         session.step(document.activeElement === chatInput ? NO_CONTROLS : readControls(input));
         input.update();
+        spanEnd("simulate");
       },
       render(alpha) {
         const now = performance.now();
+        frameIntervals.add(now - lastFrame);
+        spanStart("render");
         render(session, assets, alpha, (now - lastFrame) / 1000);
+        spanEnd("render");
+        frameWork.add(performance.now() - now);
         lastFrame = now;
       },
-      onStats: (stats) => netgraph.update(stats),
+      onStats: (stats) => {
+        flushSpans();
+        netgraph.update(stats, { interval: frameIntervals.percentiles(), work: frameWork.percentiles() });
+      },
     });
     current.loop = loop;
 
@@ -284,6 +302,7 @@ async function returnToLobby(): Promise<void> {
   }
 }
 
+exposeDebug(() => running?.session ?? null);
 renderMute();
 muteButton.addEventListener("click", () => {
   toggleMute();

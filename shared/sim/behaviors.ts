@@ -43,8 +43,10 @@ function steerHoming(entity: Entity, cfg: HomingBehavior, dt: number): void {
 
   let best: Entity | null = null;
   let bestSq = cfg.range * cfg.range;
-  for (const t of world) {
-    if (!t.alive || t === entity || t.id === cfg.ignoreId) continue;
+  const all = world.all;
+  for (let i = 0; i < all.length; i++) {
+    const t = all[i];
+    if (!t || !t.alive || t === entity || t.id === cfg.ignoreId) continue;
     if (!cfg.targets.includes(t.kind)) continue;
     const dSq = t.pos.sub(entity.pos).lengthSq();
     if (dSq < bestSq) {

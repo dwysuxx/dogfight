@@ -1,0 +1,5 @@
+{
+  // Only the root tool configs; each package has its own tsconfig.
+  "extends": "./tsconfig.base.json",
+  "include": ["vitest.config.ts", "playwright.config.ts"]
+}

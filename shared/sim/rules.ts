@@ -38,7 +38,12 @@ function asteroidShip(asteroid: Asteroid, ship: Ship, world: World): void {
   const dist = away.length() || 1;
   const normal = away.scale(1 / dist);
   const overlap = asteroid.radius + ship.radius - dist;
-  if (overlap > 0) ship.shift(normal.scale(overlap)); // push out, don't stick
+  if (overlap > 0) {
+    ship.shift(normal.scale(overlap)); // push out, don't stick
+    // The push can cross the wrap seam after this step's wrapAround() already
+    // ran (found by the in-arena property test), so wrap again.
+    ship.wrapAround();
+  }
 
   if (ship.contactCooldown <= 0) {
     ship.contactCooldown = 0.8;

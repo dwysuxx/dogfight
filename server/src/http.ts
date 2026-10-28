@@ -5,6 +5,7 @@ import { performance } from "node:perf_hooks";
 import { extname, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { WebSocket, WebSocketServer } from "ws";
+import { z } from "zod";
 import { CreateRoomRequestSchema, type RoomInfo, check } from "@dogfight/shared/protocol.ts";
 import type { ServerConfig } from "./config.ts";
 import { MatchLogStore } from "./log/matchlog.ts";
@@ -21,6 +22,8 @@ const MIME_TYPES = new Map([
   [".svg", "image/svg+xml"],
   [".wav", "audio/wav"],
 ]);
+
+const AddBotsSchema = z.strictObject({ count: z.number().int().min(1).max(64) });
 
 class HttpError extends Error {
   readonly status: number;
@@ -118,6 +121,9 @@ export async function createApp(config: ServerConfig, { logger = console }: { lo
   rooms.on("error", (error) => logger.error("Room manager error:", error));
 
   const startedAt = Date.now();
+  // Event-loop utilization since the previous /api/stats call (0..1): the
+  // share of time the loop was busy, the best single "how loaded" number.
+  let eluMark = performance.eventLoopUtilization();
   const realDistRoot = await realpath(config.clientDist).catch((error: unknown) => {
     if (errorCode(error) === "ENOENT") return null;
     throw error;
@@ -142,12 +148,16 @@ export async function createApp(config: ServerConfig, { logger = console }: { lo
       return sendJson(response, 200, { requestedMs: duration, elapsedMs: performance.now() - started });
     }
     if (request.method === "GET" && pathname === "/api/rooms") return sendJson(response, 200, { rooms: rooms.list() });
-    if (request.method === "GET" && pathname === "/api/stats")
+    if (request.method === "GET" && pathname === "/api/stats") {
+      const elu = performance.eventLoopUtilization(eluMark);
+      eluMark = performance.eventLoopUtilization();
       return sendJson(response, 200, {
         uptimeSeconds: (Date.now() - startedAt) / 1000,
         memory: process.memoryUsage(),
+        eventLoopUtilization: elu.utilization,
         ...wsHandlers.stats(),
       });
+    }
     if (request.method === "POST" && pathname === "/api/rooms") {
       const body = check(CreateRoomRequestSchema, await readJson(request, config.maxPayload));
       if (!body.ok) throw new HttpError(400, body.error.message);
@@ -159,6 +169,16 @@ export async function createApp(config: ServerConfig, { logger = console }: { lo
         throw error;
       }
       return sendJson(response, 201, created);
+    }
+    const botsRoute = /^\/api\/rooms\/([a-z0-9-]+)\/bots$/.exec(pathname);
+    if (botsRoute?.[1]) {
+      const roomId = botsRoute[1];
+      if (!rooms.get(roomId)) throw new HttpError(404, "Room does not exist");
+      if (request.method === "DELETE") return sendJson(response, 200, { room: roomId, removed: wsHandlers.removeBots(roomId) });
+      if (request.method !== "POST") throw new HttpError(405, "Method not allowed");
+      const body = check(AddBotsSchema, await readJson(request, config.maxPayload));
+      if (!body.ok) throw new HttpError(400, body.error.message);
+      return sendJson(response, 201, { room: roomId, added: wsHandlers.addBots(roomId, body.value.count) });
     }
     if (request.method === "GET" && pathname === "/api/replays") return sendJson(response, 200, { replays: await logStore.list() });
     if (request.method === "GET" && pathname.startsWith("/api/replays/")) {

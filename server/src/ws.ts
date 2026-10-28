@@ -19,6 +19,9 @@ import { decodeClientFrame } from "./frames.ts";
 import { Match, type MatchStats } from "./match.ts";
 import { type NetSimStats, type NetSimulator, createNetSim, netSimFromQuery } from "./netsim.ts";
 import type { ChatRecord, Room, RoomManager, RoomPlayer } from "./rooms.ts";
+import { Bot } from "./bots.ts";
+import { type HeartbeatPeer, startHeartbeat } from "./heartbeat.ts";
+import { type TokenBucket, createTokenBucket } from "./rate-limit.ts";
 import { type Ticker, type TickerStats, createTicker } from "./ticker.ts";
 
 export interface Logger {
@@ -45,9 +48,8 @@ interface Client {
   room: Room | null;
   player: RoomPlayer | null;
   codec: Codec;
-  alive: boolean;
-  tokens: number;
-  tokenUpdatedAt: number;
+  readonly peer: HeartbeatPeer;
+  readonly bucket: TokenBucket;
   stats: {
     bytesIn: number;
     bytesOut: number;
@@ -63,6 +65,14 @@ interface MatchEntry {
   readonly room: Room;
   readonly match: Match;
   readonly ticker: Ticker;
+  readonly bots: Map<string, Bot>;
+}
+
+export interface WsHandlers {
+  close(): void;
+  stats(): WsStats;
+  addBots(roomId: string, count: number): number;
+  removeBots(roomId: string): number;
 }
 
 type SendKind = "control" | "state" | "chat";
@@ -83,16 +93,6 @@ export interface WsStats {
   }[];
 }
 
-function consumeToken(client: Client, maxPerSecond: number): boolean {
-  const now = Date.now();
-  const elapsed = (now - client.tokenUpdatedAt) / 1000;
-  client.tokens = Math.min(maxPerSecond, client.tokens + elapsed * maxPerSecond);
-  client.tokenUpdatedAt = now;
-  if (client.tokens < 1) return false;
-  client.tokens -= 1;
-  return true;
-}
-
 const byteLength = (payload: Payload) => (typeof payload === "string" ? Buffer.byteLength(payload) : payload.byteLength);
 const rawLength = (data: Buffer | ArrayBuffer | Buffer[]) =>
   Array.isArray(data) ? data.reduce((sum, chunk) => sum + chunk.byteLength, 0) : data.byteLength;
@@ -102,7 +102,7 @@ export function attachWebSocketHandlers(
   rooms: RoomManager,
   config: ServerConfig,
   logger: Logger = console,
-): { close(): void; stats(): WsStats } {
+): WsHandlers {
   const matches = new Map<string, MatchEntry>(); // room id -> match
   const clients = new Map<string, Client>(); // client id (= room player id) -> client
 
@@ -179,17 +179,26 @@ export function attachWebSocketHandlers(
     const existing = matches.get(room.id);
     if (existing) return existing;
     const match = new Match(room);
+    const bots = new Map<string, Bot>();
     const ticker = createTicker({
       rate: TICK_RATE,
       tick: () => {
+        // Bots feed the same entry point as network clients, one input per tick.
+        for (const bot of bots.values()) match.receiveInputs(bot.id, [bot.next(match.world, match.player(bot.id)?.ship)]);
         match.step();
         broadcastState({ room, match });
       },
     });
-    const entry: MatchEntry = { room, match, ticker };
+    const entry: MatchEntry = { room, match, ticker, bots };
     matches.set(room.id, entry);
     const onLeave = (player: RoomPlayer) => {
       match.leave(player.id);
+      const wasBot = bots.delete(player.id);
+      // The last human left: the bots go too (each leave re-enters here).
+      if (!wasBot && room.players.size > 0 && [...room.players.keys()].every((id) => bots.has(id))) {
+        for (const id of [...bots.keys()]) room.leave(id);
+        return;
+      }
       if (room.players.size > 0) return sendRoster(room);
       ticker.stop();
       matches.delete(room.id);
@@ -278,10 +287,16 @@ export function attachWebSocketHandlers(
       room: null,
       player: null,
       codec: jsonCodec,
-      alive: true,
+      peer: {
+        alive: true,
+        get open() {
+          return socket.readyState === WebSocket.OPEN;
+        },
+        ping: () => socket.ping(),
+        terminate: () => socket.terminate(),
+      },
+      bucket: createTokenBucket({ ratePerSecond: config.maxMessagesPerSecond }),
       netsim: createNetSim(conditions.value),
-      tokens: config.maxMessagesPerSecond,
-      tokenUpdatedAt: Date.now(),
       joinTimer: setTimeout(() => {
         if (!client.room) fail(client, "join-timeout", "Send a join message within five seconds");
       }, config.joinTimeoutMs),
@@ -290,11 +305,11 @@ export function attachWebSocketHandlers(
     clients.set(id, client);
     socket.on("error", (error) => logger.error(`WebSocket ${client.id} error:`, error));
     socket.on("pong", () => {
-      client.alive = true;
+      client.peer.alive = true;
     });
     socket.on("message", (data, isBinary) => {
       // Rate limit on arrival, before the injected delay.
-      if (!consumeToken(client, config.maxMessagesPerSecond)) {
+      if (!client.bucket.take()) {
         logger.warn(`Rate limit exceeded by ${client.id}`);
         fail(client, "rate-limit", "Too many messages", 1008);
         return;
@@ -327,17 +342,9 @@ export function attachWebSocketHandlers(
     });
   });
 
-  const heartbeat = setInterval(() => {
-    for (const client of clients.values()) {
-      if (!client.alive) {
-        client.socket.terminate();
-        continue;
-      }
-      client.alive = false;
-      if (client.socket.readyState === WebSocket.OPEN) client.socket.ping();
-    }
+  const stopHeartbeat = startHeartbeat(function* () {
+    for (const client of clients.values()) yield client.peer;
   }, config.heartbeatMs);
-  heartbeat.unref();
 
   // Bytes/s per client, measured over the last second.
   const rates = setInterval(() => {
@@ -356,15 +363,42 @@ export function attachWebSocketHandlers(
   rates.unref();
 
   function close(): void {
-    clearInterval(heartbeat);
+    stopHeartbeat();
     clearInterval(rates);
     for (const { ticker } of matches.values()) ticker.stop();
     for (const client of clients.values()) client.netsim.dispose();
   }
   wss.once("close", close);
 
+  function addBots(roomId: string, count: number): number {
+    const room = rooms.get(roomId);
+    if (!room) throw new RangeError("Room does not exist");
+    const entry = matchFor(room);
+    let added = 0;
+    for (let i = 0; i < count && room.players.size < room.maxPlayers; i++) {
+      const bot = new Bot(`bot-${randomUUID().slice(0, 8)}`, `Bot ${entry.bots.size + 1}`, entry.bots.size + 1);
+      room.join(bot);
+      entry.match.join(bot);
+      entry.bots.set(bot.id, bot);
+      added++;
+    }
+    sendRoster(room);
+    entry.ticker.start();
+    return added;
+  }
+
+  function removeBots(roomId: string): number {
+    const entry = matches.get(roomId);
+    if (!entry) return 0;
+    const ids = [...entry.bots.keys()];
+    for (const id of ids) entry.room.leave(id);
+    return ids.length;
+  }
+
   return {
     close,
+    addBots,
+    removeBots,
     stats: () => ({
       tickRate: TICK_RATE,
       matches: [...matches.values()].map(({ room, match, ticker }) => ({

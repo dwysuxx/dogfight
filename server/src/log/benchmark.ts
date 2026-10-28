@@ -19,7 +19,7 @@ const SAMPLE_MS = 100;
 const THROTTLE_MS = 3;
 const chartPath = fileURLToPath(new URL("../../docs/backpressure-rss.svg", import.meta.url));
 
-async function* syntheticEvents(targetBytes: number) {
+function* syntheticEvents(targetBytes: number) {
   const payload = "x".repeat(PAYLOAD_BYTES);
   const count = Math.ceil(targetBytes / (PAYLOAD_BYTES + 120));
   for (let i = 0; i < count; i++)

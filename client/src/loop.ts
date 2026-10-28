@@ -13,6 +13,9 @@ export interface LoopOptions {
   simulate: (dt: number) => void;
   render: (alpha: number) => void;
   onStats?: (stats: LoopStats) => void;
+  // Injected for tests (fake timers); the browser's rAF by default.
+  requestFrame?: (callback: (now: number) => void) => number;
+  cancelFrame?: (handle: number) => void;
 }
 
 export interface Loop {
@@ -21,7 +24,14 @@ export interface Loop {
   getStats(): LoopStats;
 }
 
-export function createLoop({ step = 1 / 60, simulate, render, onStats }: LoopOptions): Loop {
+export function createLoop({
+  step = 1 / 60,
+  simulate,
+  render,
+  onStats,
+  requestFrame = (callback) => requestAnimationFrame(callback),
+  cancelFrame = (handle) => cancelAnimationFrame(handle),
+}: LoopOptions): Loop {
   let accumulator = 0;
   let last: number | null = null;
   let rafId: number | null = null;
@@ -73,7 +83,7 @@ export function createLoop({ step = 1 / 60, simulate, render, onStats }: LoopOpt
       onStats?.({ stepsPerSecond, framesPerSecond, lastFrameDuration });
     }
 
-    rafId = requestAnimationFrame(frame);
+    rafId = requestFrame(frame);
   }
 
   return {
@@ -82,11 +92,11 @@ export function createLoop({ step = 1 / 60, simulate, render, onStats }: LoopOpt
       running = true;
       last = null;
       accumulator = 0;
-      rafId = requestAnimationFrame(frame);
+      rafId = requestFrame(frame);
     },
     stop() {
       running = false;
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (rafId !== null) cancelFrame(rafId);
       rafId = null;
     },
     getStats() {

@@ -35,6 +35,12 @@ async function shutdown(signal: string): Promise<void> {
   }
 }
 
+// Started by a parent process (the load test): Windows has no SIGINT for
+// child processes, so a graceful stop (which lets --cpu-prof write its
+// profile) is requested over the IPC channel.
+process.on("message", (message: unknown) => {
+  if (message === "shutdown") void shutdown("ipc").finally(() => process.disconnect?.());
+});
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("unhandledRejection", (reason: unknown) => {

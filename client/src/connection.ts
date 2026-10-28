@@ -1,4 +1,5 @@
 import { Bus } from "@dogfight/shared/bus.ts";
+import { spanEnd, spanStart } from "./perf.ts";
 import { binaryCodec } from "@dogfight/shared/codec/binary.ts";
 import type { Codec, Payload } from "@dogfight/shared/codec/codec.ts";
 import { jsonCodec } from "@dogfight/shared/codec/json.ts";
@@ -220,7 +221,9 @@ export class GameConnection {
       if (this.#socket !== socket) return;
       const { data } = event;
       if (typeof data === "string" || data instanceof ArrayBuffer) this.bytesIn += sizeOf(data);
+      spanStart("decode");
       const decoded = this.#decode(data);
+      spanEnd("decode");
       if (!decoded.ok) {
         this.events.emit("error", new ServerError(decoded.error.code, `Server sent an invalid message: ${decoded.error.message}`));
         return;

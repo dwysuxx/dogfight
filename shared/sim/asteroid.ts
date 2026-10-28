@@ -39,11 +39,19 @@ export class Asteroid extends Entity {
       shape: data.shape,
       hp: data.hp,
     });
-    asteroid.id = data.id;
-    asteroid.angle = data.angle;
-    asteroid.maxHp = data.maxHp;
-    if (data.homing) withHoming(asteroid, { targets: ["ship"] });
-    return asteroid;
+    return asteroid.applySnapshot(data);
+  }
+
+  // The outline never changes for an id, so only the live fields are copied.
+  applySnapshot(data: AsteroidSnapshot): this {
+    this.id = data.id;
+    this.angle = data.angle;
+    this.radius = data.radius;
+    this.#hp = data.hp;
+    this.maxHp = data.maxHp;
+    if (!data.homing) this.behaviors.length = 0;
+    else if (this.behaviors.length === 0) withHoming(this, { targets: ["ship"] });
+    return this;
   }
 
   toSnapshot(): AsteroidSnapshot {

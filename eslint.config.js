@@ -2,11 +2,24 @@
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/**", "**/dist/**", "server/logs/**"] },
-  ...tseslint.configs.recommended,
+  {
+    ignores: ["**/node_modules/**", "**/dist/**", "server/logs/**", "coverage/**", "playwright-report/**", "test-results/**", "eslint.config.js"],
+  },
+  // Type-checked rules read the TypeScript types, so they catch floating
+  // promises and values that are secretly `any` (JSON, catch, fetch...).
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
   {
     files: ["**/*.ts"],
     rules: {
+      "@typescript-eslint/no-floating-promises": "error",
       "no-var": "error",
       "prefer-const": "error",
       eqeqeq: "error",
@@ -18,6 +31,11 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
+  },
+  {
+    // Test fakes implement async APIs without awaiting anything.
+    files: ["**/test/**/*.ts", "e2e/**/*.ts"],
+    rules: { "@typescript-eslint/require-await": "off" },
   },
   {
     // The shared simulation must be deterministic and runtime-neutral.

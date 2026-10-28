@@ -55,8 +55,10 @@ export interface Assets {
   errors: { key: string; error: unknown }[];
 }
 
-function abortError(signal: AbortSignal | undefined): unknown {
-  return signal?.reason ?? new DOMException("The operation was aborted", "AbortError");
+// Always an Error, so a rejected promise never carries a bare value.
+function abortError(signal: AbortSignal | undefined): Error {
+  const reason: unknown = signal?.reason;
+  return reason instanceof Error ? reason : new DOMException("The operation was aborted", "AbortError");
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

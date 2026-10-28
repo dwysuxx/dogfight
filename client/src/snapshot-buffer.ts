@@ -22,6 +22,31 @@ function lerpAxis(from: number, to: number, alpha: number, span: number): number
   return from + delta * alpha;
 }
 
+export interface Pose {
+  x: number;
+  y: number;
+  angle: number;
+  age: number; // explosions only
+}
+
+// Allocation-free version for the render loop: writes into `out`.
+export function interpolatePose(out: Pose, before: EntitySnapshot | undefined, after: EntitySnapshot, alpha: number, bounds: Bounds): Pose {
+  const age = after.kind === "explosion" ? after.age : 0;
+  if (!before || before === after || alpha >= 1 || before.kind !== after.kind) {
+    out.x = after.x;
+    out.y = after.y;
+    out.angle = after.angle;
+    out.age = age;
+    return out;
+  }
+  const radius = WRAP_RADIUS[after.kind];
+  out.x = lerpAxis(before.x, after.x, alpha, radius === undefined ? 0 : bounds.width + radius * 2);
+  out.y = lerpAxis(before.y, after.y, alpha, radius === undefined ? 0 : bounds.height + radius * 2);
+  out.angle = lerpAngle(before.angle, after.angle, alpha);
+  out.age = before.kind === "explosion" ? lerp(before.age, age, alpha) : age;
+  return out;
+}
+
 // One entity's wire data at `alpha` between two snapshots. Generic over the
 // exact snapshot type, so a ShipSnapshot in gives a ShipSnapshot out.
 export function interpolateEntity<E extends EntitySnapshot>(before: E | undefined, after: E, alpha: number, bounds: Bounds): E {
@@ -99,9 +124,11 @@ export class SnapshotBuffer<S extends { readonly tick: number }> {
 
     if (this.#lastRenderTick <= first.state.tick) return { before: first.state, after: second.state, alpha: 0 };
 
-    for (const [i, entry] of this.#snapshots.entries()) {
-      const next = this.#snapshots[i + 1];
-      if (!next) break;
+    const snapshots = this.#snapshots;
+    for (let i = 0; i + 1 < snapshots.length; i++) {
+      const entry = snapshots[i];
+      const next = snapshots[i + 1];
+      if (!entry || !next) break;
       const before = entry.state;
       const after = next.state;
       if (this.#lastRenderTick > after.tick) continue;

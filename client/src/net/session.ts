@@ -19,7 +19,9 @@ import { entityFromSnapshot } from "@dogfight/shared/sim/snapshot.ts";
 import type { Vector2 } from "@dogfight/shared/sim/vector.ts";
 import type { GameEntity } from "@dogfight/shared/sim/world.ts";
 import type { GameConnection } from "../connection.ts";
-import { SnapshotBuffer, interpolateEntity } from "../snapshot-buffer.ts";
+import { type Pose, SnapshotBuffer, interpolatePose } from "../snapshot-buffer.ts";
+import { spanEnd, spanStart } from "../perf.ts";
+import { RenderCache } from "./render-cache.ts";
 
 const PING_INTERVAL_MS = 500;
 
@@ -31,10 +33,11 @@ export type GameEvents = {
   correction: { px: number };
 };
 
+// Reused between frames (the array and the item objects): treat as read-only.
 export interface Renderable {
-  readonly entity: GameEntity;
-  readonly alpha: number;
-  readonly offset: Vector2 | null;
+  entity: GameEntity;
+  alpha: number;
+  offset: Vector2 | null;
 }
 
 export interface NetStats {
@@ -91,6 +94,13 @@ export class GameSession {
   #corrections: { at: number; value: number }[] = [];
   #snapshotTimes: number[] = [];
   #lastSecond = { at: 0, bytesIn: 0, bytesOut: 0 };
+  // Render-path scratch, reused every frame (Lab 7: no per-frame garbage).
+  readonly #cache = new RenderCache();
+  readonly #pool: Renderable[] = []; // grows to the largest frame, never shrinks
+  readonly #items: Renderable[] = [];
+  #count = 0;
+  readonly #pose: Pose = { x: 0, y: 0, angle: 0, age: 0 };
+  readonly #index = new WeakMap<StateMessage, Map<EntityId, EntitySnapshot>>();
 
   constructor({ connection, arena, perturb = null }: { connection: GameConnection; arena: Arena; perturb?: ((ship: Ship) => void) | null }) {
     this.connection = connection;
@@ -138,7 +148,9 @@ export class GameSession {
     this.buffer.push(state, now);
     this.#snapshotTimes.push(now);
 
+    spanStart("reconcile");
     const correction = this.predictor?.reconcile(state);
+    spanEnd("reconcile");
     if (correction !== null && correction !== undefined) {
       this.stats.correction = correction;
       this.#corrections.push({ at: now, value: correction });
@@ -179,45 +191,84 @@ export class GameSession {
     this.connection.sendNetSim(conditions);
   }
 
-  // What to draw this frame.
-  renderables(now: number, frameSeconds: number, stepAlpha: number): Renderable[] {
-    const items: Renderable[] = [];
-    const context = { players: this.players };
+  // Entity id -> data, built once per snapshot (not once per frame).
+  #indexOf(state: StateMessage): Map<EntityId, EntitySnapshot> {
+    let index = this.#index.get(state);
+    if (!index) {
+      index = new Map();
+      for (const entity of state.entities) index.set(entity.id, entity);
+      this.#index.set(state, index);
+    }
+    return index;
+  }
+
+  #add(entity: GameEntity, alpha: number, offset: Vector2 | null): void {
+    let item = this.#pool[this.#count];
+    if (item) {
+      item.entity = entity;
+      item.alpha = alpha;
+      item.offset = offset;
+    } else {
+      item = { entity, alpha, offset };
+      this.#pool.push(item);
+    }
+    this.#items[this.#count++] = item;
+  }
+
+  #remote(data: EntitySnapshot, predicted: boolean): boolean {
+    return !(predicted && this.#isOwn(data));
+  }
+
+  // What to draw this frame. The returned array and its items are reused by
+  // the next call.
+  renderables(now: number, frameSeconds: number, stepAlpha: number): readonly Renderable[] {
+    this.#count = 0;
+    const cache = this.#cache;
+    const pose = this.#pose;
     const predicted = this.prediction && this.predictor !== null;
-    const remote = (data: EntitySnapshot) => !(predicted && this.#isOwn(data));
+    cache.begin();
 
     if (this.interpolation) {
       const sample = this.buffer.sample(now);
       if (sample) {
-        const before = new Map(sample.before.entities.map((e) => [e.id, e]));
-        const after = new Set<EntityId>();
-        for (const data of sample.after.entities) {
-          after.add(data.id);
-          if (!remote(data)) continue;
-          const previous = before.get(data.id);
-          const lerped = interpolateEntity(previous?.kind === data.kind ? previous : undefined, data, sample.alpha, this.arena);
-          items.push({ entity: entityFromSnapshot(lerped, context), alpha: 1, offset: null });
+        const before = this.#indexOf(sample.before);
+        const after = this.#indexOf(sample.after);
+        const afterList = sample.after.entities;
+        for (let i = 0; i < afterList.length; i++) {
+          const data = afterList[i];
+          if (!data || !this.#remote(data, predicted)) continue;
+          interpolatePose(pose, before.get(data.id), data, sample.alpha, this.arena);
+          this.#add(cache.place(data, pose, this.players), 1, null);
         }
         // Gone in the newer snapshot: keep drawing it until we get there.
+        const beforeList = sample.before.entities;
         if (sample.alpha < 1)
-          for (const data of sample.before.entities)
-            if (!after.has(data.id) && remote(data)) items.push({ entity: entityFromSnapshot(data, context), alpha: 1, offset: null });
+          for (let i = 0; i < beforeList.length; i++) {
+            const data = beforeList[i];
+            if (data && !after.has(data.id) && this.#remote(data, predicted))
+              this.#add(cache.place(data, interpolatePose(pose, undefined, data, 1, this.arena), this.players), 1, null);
+          }
       }
     } else if (this.latestState) {
       for (const data of this.latestState.entities)
-        if (remote(data)) items.push({ entity: entityFromSnapshot(data, context), alpha: 1, offset: null });
+        if (this.#remote(data, predicted))
+          this.#add(cache.place(data, interpolatePose(pose, undefined, data, 1, this.arena), this.players), 1, null);
     }
+    cache.end();
 
     // Prediction off: the own ship took the remote path above, so it moves
     // only when snapshots say so, a full round trip after the key press.
     if (predicted && this.predictor) {
       this.predictor.smooth(frameSeconds);
       const ship = this.predictor.ship;
-      for (const entity of this.predictor.entities()) {
-        items.push({ entity, alpha: stepAlpha, offset: entity === ship ? this.predictor.offset : null });
+      const own = this.predictor.entities();
+      for (let i = 0; i < own.length; i++) {
+        const entity = own[i];
+        if (entity?.alive) this.#add(entity, stepAlpha, entity === ship ? this.predictor.offset : null);
       }
     }
-    return items;
+    this.#items.length = this.#count;
+    return this.#items;
   }
 
   // HUD data: own ship (predicted when possible) and the bot.
@@ -225,7 +276,8 @@ export class GameSession {
     const context = { players: this.players };
     const asShip = (data: EntitySnapshot | undefined): Ship | null => {
       if (data?.kind !== "ship") return null;
-      const entity = entityFromSnapshot(data, context);
+      // The renderer's cached Ship when there is one: no allocation per frame.
+      const entity = this.#cache.get(data.id) ?? entityFromSnapshot(data, context);
       return entity.kind === "ship" ? entity : null;
     };
     const predicted = this.prediction ? (this.predictor?.ship ?? null) : null;

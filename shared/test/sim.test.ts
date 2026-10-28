@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import { entityId, seq } from "../brand.ts";
@@ -7,7 +7,7 @@ import { botControls } from "../sim/ai.ts";
 import { Asteroid } from "../sim/asteroid.ts";
 import { withHoming } from "../sim/behaviors.ts";
 import { Bullet } from "../sim/bullet.ts";
-import { findCollisions } from "../sim/collision.ts";
+import { collisionPairs } from "../sim/collision.ts";
 import { Entity, type StepControls } from "../sim/entity.ts";
 import { createGame } from "../sim/game.ts";
 import { Pickup } from "../sim/pickup.ts";
@@ -105,10 +105,12 @@ test("the `this` bug: a detached fire() throws, a listener fire() silently does 
   const world = quietWorld();
   const ship = world.spawn(new Ship({ pos: new Vector2(200, 200) }));
 
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- this test reproduces the bug on purpose
   const detached = ship.fire;
   assert.throws(() => detached(), TypeError);
 
   const button = new EventTarget();
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- this test reproduces the bug on purpose
   button.addEventListener("click", ship.fire);
   button.dispatchEvent(new Event("click"));
   world.step(DT);
@@ -140,7 +142,7 @@ test("collisions: the system only emits pairs; bullets damage asteroids", () => 
     new Bullet({ pos: new Vector2(300, 300), vel: new Vector2(10, 0), owner: shooter, damage: 20 }),
   );
 
-  const pairs = [...findCollisions(world)];
+  const pairs = collisionPairs(world);
   assert.equal(pairs.length, 1);
   assert.ok(pairs[0]?.includes(asteroid) && pairs[0].includes(bullet));
 

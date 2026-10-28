@@ -3,15 +3,6 @@ import { Entity } from "./entity.ts";
 import { type Rng, createRng } from "./rng.ts";
 import { Vector2 } from "./vector.ts";
 
-export interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-}
-
 export interface ExplosionOptions {
   pos: Vector2;
   rng: Rng;
@@ -21,9 +12,11 @@ export interface ExplosionOptions {
   color?: string;
 }
 
-// Many short-lived objects: each explosion owns a bunch of particles. It is
-// one entity (not collidable) so the World stays small — but it is exactly the
-// kind of churn Lab 7 will measure.
+// Many short-lived particles per explosion. Lab 7: they live in typed arrays
+// (struct of arrays) instead of one object per particle: one allocation per
+// explosion instead of 36, a dense homogeneous layout for the update loop,
+// and positions that are a pure function of age (x = x0 + vx * age), so the
+// client can show any age without re-simulating or re-allocating.
 export class Explosion extends Entity {
   readonly kind = "explosion";
   ttl: number;
@@ -31,7 +24,9 @@ export class Explosion extends Entity {
   color: string;
   count: number;
   speed: number;
-  readonly particles: Particle[];
+  readonly vx: Float64Array;
+  readonly vy: Float64Array;
+  readonly maxLife: Float64Array;
 
   constructor({ pos, rng, count = 24, speed = 160, ttl = 0.8, color = "#ffb347" }: ExplosionOptions) {
     super({ pos, radius: 0 });
@@ -40,17 +35,43 @@ export class Explosion extends Entity {
     this.color = color;
     this.count = count;
     this.speed = speed;
-    this.particles = Array.from({ length: count }, () => {
+    const n = Math.max(0, Math.trunc(count));
+    this.vx = new Float64Array(n);
+    this.vy = new Float64Array(n);
+    this.maxLife = new Float64Array(n);
+    // Same rng calls in the same order as before: the server's world rng
+    // stream (and so the determinism hash) is unchanged.
+    for (let i = 0; i < n; i++) {
       const angle = rng() * Math.PI * 2;
       const v = speed * (0.3 + rng() * 0.7);
       const life = ttl * (0.5 + rng() * 0.5);
-      return { x: pos.x, y: pos.y, vx: Math.cos(angle) * v, vy: Math.sin(angle) * v, life, maxLife: life };
-    });
+      this.vx[i] = Math.cos(angle) * v;
+      this.vy[i] = Math.sin(angle) * v;
+      this.maxLife[i] = life;
+    }
+  }
+
+  get particleCount(): number {
+    return this.vx.length;
+  }
+
+  // Particle i at the current age.
+  particleX(i: number): number {
+    return this.pos.x + (this.vx[i] ?? 0) * this.age;
+  }
+
+  particleY(i: number): number {
+    return this.pos.y + (this.vy[i] ?? 0) * this.age;
+  }
+
+  // Remaining life as a fraction of the particle's lifetime (<= 0: gone).
+  particleLife(i: number): number {
+    const maxLife = this.maxLife[i] ?? 0;
+    return maxLife > 0 ? (maxLife - this.age) / maxLife : 0;
   }
 
   // Particles are cosmetic, so they are NOT sent: the client regrows them from
-  // a seed (the id) and fast-forwards to the snapshot's age. 36 particles x 6
-  // numbers would otherwise be most of every snapshot.
+  // a seed (the id) and jumps to the snapshot's age.
   static fromSnapshot(data: ExplosionSnapshot): Explosion {
     const explosion = new Explosion({
       pos: new Vector2(data.x, data.y),
@@ -59,9 +80,14 @@ export class Explosion extends Entity {
       speed: data.speed,
       color: data.color,
     });
-    explosion.id = data.id;
-    if (data.age > 0) explosion.update(data.age);
-    return explosion;
+    return explosion.applySnapshot(data);
+  }
+
+  applySnapshot(data: ExplosionSnapshot): this {
+    this.id = data.id;
+    this.age = data.age;
+    this.alive = this.age < this.ttl;
+    return this;
   }
 
   toSnapshot(): ExplosionSnapshot {
@@ -70,11 +96,6 @@ export class Explosion extends Entity {
 
   override update(dt: number): void {
     this.age += dt;
-    for (const p of this.particles) {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.life -= dt;
-    }
     if (this.age >= this.ttl) this.alive = false;
   }
 }

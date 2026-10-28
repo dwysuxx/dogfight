@@ -16,17 +16,27 @@
     "dev:client": "npm run dev --workspace client",
     "start": "node --env-file-if-exists=.env server/src/index.ts",
     "build": "npm run build --workspace client",
-    "typecheck": "npm run typecheck --workspaces",
-    "test": "node --test",
+    "typecheck": "npm run typecheck --workspaces && tsc -p . --noEmit && tsc -p bench --noEmit && tsc -p e2e --noEmit",
+    "test": "vitest run",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm test",
+    "check": "npm run typecheck && npm run lint && npm run coverage",
     "benchmark": "node server/src/log/benchmark.ts",
-    "netbench": "node server/src/tools/netbench.ts"
+    "netbench": "node server/src/tools/netbench.ts",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "e2e": "playwright test",
+    "bench:frame": "node bench/frame-bench.ts",
+    "bench:load": "node bench/load-test.ts && node bench/load-test.ts --rooms && node bench/chart.ts",
+    "bench:worker": "node bench/worker-experiment.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "^24.19.2",
+    "@vitest/coverage-v8": "^5.0.5",
     "eslint": "^9.39.5",
+    "fast-check": "^4.10.2",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
   }
 }

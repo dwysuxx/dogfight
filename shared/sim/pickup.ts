@@ -26,9 +26,13 @@ export class Pickup extends Entity {
   }
 
   static fromSnapshot(data: PickupSnapshot): Pickup {
-    const pickup = new Pickup({ pos: new Vector2(data.x, data.y), effect: data.effect });
-    pickup.id = data.id;
-    return pickup;
+    return new Pickup({ pos: new Vector2(data.x, data.y), effect: data.effect }).applySnapshot(data);
+  }
+
+  applySnapshot(data: PickupSnapshot): this {
+    this.id = data.id;
+    this.effect = data.effect;
+    return this;
   }
 
   toSnapshot(): PickupSnapshot {

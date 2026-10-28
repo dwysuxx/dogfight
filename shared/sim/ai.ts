@@ -12,8 +12,10 @@ export function botControls(world: World, self: Ship | null): StepControls {
 
   let target: Ship | null = null;
   let best = Infinity;
-  for (const s of world.ofKind("ship")) {
-    if (s === self || !s.alive) continue;
+  const all = world.all;
+  for (let i = 0; i < all.length; i++) {
+    const s = all[i];
+    if (!s || s.kind !== "ship" || s === self || !s.alive) continue;
     const d = s.pos.distanceTo(self.pos);
     if (d < best) {
       best = d;

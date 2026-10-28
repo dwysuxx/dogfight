@@ -35,11 +35,18 @@ export class Bullet extends Entity {
       owner,
       ttl: data.ttl,
     });
-    bullet.id = data.id;
-    bullet.seq = data.seq;
-    bullet.ownerId = data.owner;
-    if (data.homing) withHoming(bullet, { ...BULLET_HOMING, ignoreId: owner?.id ?? null });
-    return bullet;
+    return bullet.applySnapshot(data);
+  }
+
+  applySnapshot(data: BulletSnapshot): this {
+    this.id = data.id;
+    this.seq = data.seq;
+    this.ownerId = data.owner;
+    this.ttl = data.ttl;
+    if (this.vel.x !== data.vx || this.vel.y !== data.vy) this.vel = new Vector2(data.vx, data.vy);
+    if (!data.homing) this.behaviors.length = 0;
+    else if (this.behaviors.length === 0) withHoming(this, { ...BULLET_HOMING, ignoreId: this.owner?.id ?? null });
+    return this;
   }
 
   toSnapshot(): BulletSnapshot {

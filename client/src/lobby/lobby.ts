@@ -20,8 +20,9 @@ export type LobbyEvents = {
   refreshError: unknown;
 };
 
-function abortError(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+function abortError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error ? reason : new DOMException("The operation was aborted", "AbortError");
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {

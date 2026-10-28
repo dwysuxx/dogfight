@@ -16,7 +16,11 @@ export interface TickerStats {
   readonly totalTicks: number;
   readonly overruns: number;
   readonly lastSecond: TickWindow;
+  // Tick duration percentiles over the last RECENT_TICKS ticks (~10 s).
+  readonly recent: { readonly p50: number; readonly p95: number; readonly p99: number; readonly max: number };
 }
+
+const RECENT_TICKS = 300;
 
 export interface Ticker {
   readonly interval: number;
@@ -52,6 +56,7 @@ export function createTicker({
   let windowStarted = 0;
   let totalTicks = 0;
   let overruns = 0;
+  const recent = new Float64Array(RECENT_TICKS); // ring of tick durations, no allocation per tick
 
   function run(): void {
     if (!running) return;
@@ -60,6 +65,7 @@ export function createTicker({
     tick();
     const finished = now();
     const duration = finished - started;
+    recent[totalTicks % RECENT_TICKS] = duration;
     totalTicks++;
 
     window.ticks++;
@@ -106,7 +112,16 @@ export function createTicker({
     },
     // Last full second: ticks run, tick duration and lateness (jitter).
     stats() {
-      return { rate, intervalMs: interval, totalTicks, overruns, lastSecond: last };
+      const sorted = recent.slice(0, Math.min(totalTicks, RECENT_TICKS)).sort();
+      const at = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? 0;
+      return {
+        rate,
+        intervalMs: interval,
+        totalTicks,
+        overruns,
+        lastSecond: last,
+        recent: { p50: at(0.5), p95: at(0.95), p99: at(0.99), max: sorted.at(-1) ?? 0 },
+      };
     },
   };
 }

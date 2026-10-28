@@ -5,7 +5,7 @@ import { type Server, request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
-import { type TestContext, test } from "node:test";
+import { type TestContext, test } from "vitest";
 import { WebSocket } from "ws";
 import { z } from "zod";
 import { seq } from "@dogfight/shared/brand.ts";
@@ -91,7 +91,7 @@ function withApp(t: TestContext, options?: AppOptions) {
   const ready = (async () => {
     const directory = await createTempDirectory();
     const started = await startApp(directory, options);
-    t.after(async () => {
+    t.onTestFinished(async () => {
       await closeApp(started.app, sockets);
       await rm(directory, { recursive: true, force: true });
     });
@@ -506,7 +506,7 @@ test("WebSocket validates every message with the shared schemas and enforces rat
 
 test("HTTP rejects a symlink that escapes the static root", async (t) => {
   const directory = await createTempDirectory();
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.onTestFinished(() => rm(directory, { recursive: true, force: true }));
   const dist = join(directory, "dist");
   const outside = join(directory, "secret.txt");
   await mkdir(dist, { recursive: true });
@@ -525,6 +525,6 @@ test("HTTP rejects a symlink that escapes the static root", async (t) => {
   );
   app.server.listen(0, "127.0.0.1");
   await once(app.server, "listening");
-  t.after(() => closeApp(app));
+  t.onTestFinished(() => closeApp(app));
   assert.equal((await fetch(`http://127.0.0.1:${portOf(app.server)}/leak.txt`)).status, 404);
 });

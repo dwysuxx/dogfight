@@ -18,6 +18,7 @@ const flush = (ship: Ship) => ship.world?.step(1 / 60); // spawned bullets appea
 // --- 1. The bug, version A: a detached call. `this` is undefined (strict mode).
 {
   const ship = freshShip();
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- the bug this demo reproduces on purpose
   const fire = ship.fire; // passed the function, not the call
   try {
     fire();
@@ -31,6 +32,7 @@ const flush = (ship: Ship) => ship.world?.step(1 / 60); // spawned bullets appea
 {
   const ship = freshShip();
   const button = new EventTarget();
+  // eslint-disable-next-line @typescript-eslint/unbound-method -- the bug this demo reproduces on purpose
   button.addEventListener("click", ship.fire); // BUG: passes the function
   button.dispatchEvent(new Event("click"));
   flush(ship);

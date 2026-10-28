@@ -5,6 +5,12 @@ import type { LoopStats } from "../loop.ts";
 import type { GameSession, NetgraphSample } from "./session.ts";
 
 const HISTORY = 120;
+
+type Percentiles = { p50: number; p95: number; p99: number };
+export interface FrameReport {
+  interval: Percentiles;
+  work: Percentiles;
+}
 const PRESETS: readonly { label: string; lag: number; jitter: number; drop: number }[] = [
   { label: "off", lag: 0, jitter: 0, drop: 0 },
   { label: "~100 ms RTT ±30, 2% drop", lag: 50, jitter: 30, drop: 0.02 },
@@ -16,7 +22,7 @@ const fmt = (value: number | null | undefined, digits = 0, unit = "") =>
   value === null || value === undefined || Number.isNaN(value) ? "–" : `${value.toFixed(digits)}${unit}`;
 
 export interface Netgraph {
-  update(loopStats: LoopStats): void;
+  update(loopStats: LoopStats, frames?: FrameReport): void;
   handleKey(code: string): boolean;
   dispose(): void;
 }
@@ -77,13 +83,16 @@ export function createNetgraph({
   }
 
   return {
-    update(loopStats: LoopStats) {
+    update(loopStats: LoopStats, frames?: FrameReport) {
       text.hidden = canvas.hidden = !visible;
       if (!visible) return;
       const s = session.sampleStats(performance.now());
       const netsim = s.netsim ? `${s.netsim.lag}±${s.netsim.jitter} ms/dir, drop ${(s.netsim.drop * 100).toFixed(0)}%` : "–";
       text.textContent = [
         `fps ${loopStats.framesPerSecond}  steps/s ${loopStats.stepsPerSecond}  frame ${fmt(loopStats.lastFrameDuration, 1)} ms`,
+        frames
+          ? `frame ms p50/p95/p99 ${fmt(frames.interval.p50, 1)}/${fmt(frames.interval.p95, 1)}/${fmt(frames.interval.p99, 1)}  js ${fmt(frames.work.p50, 2)}/${fmt(frames.work.p95, 2)}/${fmt(frames.work.p99, 2)}`
+          : "",
         `rtt ${fmt(s.rtt, 0, " ms")}  (avg ${fmt(s.rttAvg, 0)})   codec ${s.codec}`,
         `snapshots ${s.snapshotsPerSecond}/s  age ${fmt(s.snapshotAge, 0, " ms")}  tick ${s.serverTick}`,
         `down ${fmt(s.bytesInPerSecond / 1024, 2)} KB/s  up ${fmt(s.bytesOutPerSecond / 1024, 2)} KB/s`,

@@ -23,6 +23,66 @@ const MAX_PENDING = 90; // 3 s of inputs; beyond that the server is not listenin
 const SNAP_DISTANCE = 120; // bigger corrections are teleports (respawn), not errors
 const SMOOTHING_SECONDS = 0.04; // offset time constant: ~95% gone after 120 ms
 
+export interface PendingInput {
+  readonly seq: Seq;
+  readonly controls: Controls;
+}
+
+export interface ReplayOptions {
+  bounds: Bounds;
+  playerId: PlayerId;
+  players?: PlayerLookup;
+  dt?: number;
+  perturb?: ((ship: Ship) => void) | null;
+}
+
+export interface Prediction {
+  readonly world: World;
+  readonly ship: Ship | null;
+  readonly pending: PendingInput[];
+}
+
+// The prediction world: no collisions (hits, pickups and asteroid bumps are
+// the server's call and show up as corrections), and world-assigned ids so
+// fresh predicted bullets never collide with the server ids in it.
+export function createPredictionWorld(bounds: Bounds): World {
+  return new World({ width: bounds.width, height: bounds.height, collisions: NO_COLLISIONS, assignIds: true });
+}
+
+// One predicted step: the same Ship/Bullet code the server runs.
+export function stepPrediction(
+  world: World,
+  ship: Ship | null,
+  { seq, controls }: PendingInput,
+  dt: number,
+  perturb: ((ship: Ship) => void) | null = null,
+): void {
+  world.step(dt, ship ? new Map([[ship.id, { ...controls, seq }]]) : undefined);
+  if (perturb && ship?.alive) perturb(ship);
+}
+
+// Reconciliation as a pure function of (snapshot, pending inputs): start from
+// the server's own ship and own bullets, drop the inputs the server already
+// applied (seq <= ack), replay the rest in order. No hidden state: the same
+// arguments always give the same prediction.
+export function replay(
+  state: StateMessage,
+  pending: readonly PendingInput[],
+  { bounds, playerId, players = new Map(), dt = TICK_SECONDS, perturb = null }: ReplayOptions,
+): Prediction {
+  const remaining = pending.filter((input) => input.seq > state.ack);
+  const world = createPredictionWorld(bounds);
+  const shipData = state.entities.find((e) => e.kind === "ship" && !e.bot && e.owner === playerId);
+  const ship = shipData?.kind === "ship" ? Ship.fromSnapshot(shipData, { players }) : null;
+  if (ship) world.spawn(ship, { keepId: true });
+  for (const data of state.entities) {
+    if (data.kind !== "bullet" || data.owner !== playerId) continue;
+    world.spawn(Bullet.fromSnapshot(data, { owner: ship }), { keepId: true });
+  }
+  for (const input of remaining) stepPrediction(world, ship, input, dt, perturb);
+  return { world, ship, pending: remaining };
+}
+
 export interface PredictorOptions {
   bounds: Bounds;
   playerId: PlayerId;
@@ -43,9 +103,8 @@ export class Predictor {
   lastCorrection = 0;
   #world: World;
   #ship: Ship | null = null;
-  #pending: { seq: Seq; controls: Controls }[] = [];
+  #pending: PendingInput[] = [];
   #lastTick = -1;
-  #replaying = false;
 
   constructor({ bounds, playerId, players = new Map(), dt = TICK_SECONDS, perturb = null, onFire = null }: PredictorOptions) {
     this.bounds = bounds;
@@ -54,7 +113,7 @@ export class Predictor {
     this.dt = dt;
     this.perturb = perturb;
     this.onFire = onFire;
-    this.#world = this.#createWorld();
+    this.#world = this.#listen(createPredictionWorld(bounds));
   }
 
   get ship(): Ship | null {
@@ -65,15 +124,16 @@ export class Predictor {
     return this.#pending.length;
   }
 
-  *entities(): Generator<GameEntity> {
-    for (const entity of this.#world) if (entity.alive) yield entity;
+  // The live list (no generator: nothing allocated per frame).
+  entities(): readonly GameEntity[] {
+    return this.#world.all;
   }
 
   // Called once per client simulation step with the input just sent.
   applyInput(seq: Seq, controls: Controls): void {
     this.#pending.push({ seq, controls });
     if (this.#pending.length > MAX_PENDING) this.#pending.shift();
-    this.#step(seq, controls);
+    stepPrediction(this.#world, this.#ship, { seq, controls }, this.dt, this.perturb);
   }
 
   // Returns the correction in px, or null when the snapshot was stale.
@@ -82,20 +142,10 @@ export class Predictor {
     this.#lastTick = state.tick satisfies Tick;
     const before = this.ship?.pos ?? null;
 
-    while (this.#pending.length && (this.#pending[0]?.seq ?? Infinity) <= state.ack) this.#pending.shift();
-
-    this.#world = this.#createWorld();
-    const shipData = state.entities.find((e) => e.kind === "ship" && !e.bot && e.owner === this.playerId);
-    this.#ship = shipData?.kind === "ship" ? Ship.fromSnapshot(shipData, { players: this.players }) : null;
-    if (this.#ship) this.#world.spawn(this.#ship, { keepId: true });
-    for (const data of state.entities) {
-      if (data.kind !== "bullet" || data.owner !== this.playerId) continue;
-      this.#world.spawn(Bullet.fromSnapshot(data, { owner: this.#ship }), { keepId: true });
-    }
-
-    this.#replaying = true;
-    for (const { seq, controls } of this.#pending) this.#step(seq, controls);
-    this.#replaying = false;
+    const prediction = replay(state, this.#pending, this);
+    this.#pending = prediction.pending;
+    this.#ship = prediction.ship;
+    this.#world = this.#listen(prediction.world); // after the replay: replayed shots stay silent
 
     const after = this.ship;
     if (!before || !after) {
@@ -115,25 +165,8 @@ export class Predictor {
     if (this.offset.lengthSq() < 1e-4) this.offset = new Vector2();
   }
 
-  #step(seq: Seq, controls: Controls): void {
-    const ship = this.#ship;
-    this.#world.step(this.dt, ship ? new Map([[ship.id, { ...controls, seq }]]) : undefined);
-    if (this.perturb && this.ship) this.perturb(this.ship);
-  }
-
-  #createWorld(): World {
-    // No collisions: hits, pickups and asteroid bumps are the server's call,
-    // and show up as corrections. Fresh predicted bullets get world-assigned
-    // ids that skip the server ids already in this small world.
-    const world = new World({
-      width: this.bounds.width,
-      height: this.bounds.height,
-      collisions: NO_COLLISIONS,
-      assignIds: true,
-    });
-    world.events.on("fired", (event) => {
-      if (!this.#replaying) this.onFire?.(event);
-    });
+  #listen(world: World): World {
+    world.events.on("fired", (event) => this.onFire?.(event));
     return world;
   }
 

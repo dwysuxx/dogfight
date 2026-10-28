@@ -46,6 +46,10 @@ export class World {
   time = 0;
   tick: Tick = tick(0);
   #entities = new Map<EntityId, GameEntity>();
+  // The same entities as a dense array in insertion order (the Map's order,
+  // which determinism depends on). Iterating an array allocates nothing;
+  // iterating a generator allocates a result object per element.
+  #list: GameEntity[] = [];
   #pending: GameEntity[] = []; // spawned during a step; added when the step ends
   #timers: { left: number; fn: () => void }[] = [];
   #systems: System[] = [];
@@ -75,8 +79,16 @@ export class World {
     entity.world = this;
     // Mid-step spawns are deferred so we never grow the Map while iterating it.
     if (this.#stepping) this.#pending.push(entity);
-    else this.#entities.set(entity.id, entity);
+    else this.#add(entity);
     return entity;
+  }
+
+  #add(entity: GameEntity): void {
+    const previous = this.#entities.get(entity.id);
+    this.#entities.set(entity.id, entity);
+    // Map.set on an existing key keeps its position; mirror that.
+    if (previous) this.#list[this.#list.indexOf(previous)] = entity;
+    else this.#list.push(entity);
   }
 
   #newId(): EntityId {
@@ -103,19 +115,27 @@ export class World {
     return this.#entities.size;
   }
 
-  // for...of over the world walks every entity without building an array.
-  *[Symbol.iterator](): Generator<GameEntity> {
-    yield* this.#entities.values();
+  // The live list, read-only. Hot loops use this directly.
+  get all(): readonly GameEntity[] {
+    return this.#list;
   }
 
-  // Narrowed by kind: ofKind("ship") yields Ship, not GameEntity.
-  *ofKind<K extends GameEntity["kind"]>(kind: K): Generator<Extract<GameEntity, { kind: K }>> {
-    for (const e of this) if (isKind(e, kind)) yield e;
+  [Symbol.iterator](): ArrayIterator<GameEntity> {
+    return this.#list[Symbol.iterator]();
+  }
+
+  // Narrowed by kind: ofKind("ship") gives Ship[], not GameEntity[].
+  ofKind<K extends GameEntity["kind"]>(kind: K): Extract<GameEntity, { kind: K }>[] {
+    return this.#list.filter((e): e is Extract<GameEntity, { kind: K }> => isKind(e, kind));
   }
 
   countKind(kind: GameEntity["kind"]): number {
     let n = 0;
-    for (const e of this.ofKind(kind)) if (e.alive) n++;
+    const list = this.#list;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (e && e.kind === kind && e.alive) n++;
+    }
     return n;
   }
 
@@ -130,9 +150,14 @@ export class World {
   step(dt: number, inputs: StepInputs = NO_INPUTS): void {
     this.#stepping = true;
 
-    for (const e of this) e.savePrevious();
-    for (const e of this) {
-      if (!e.alive || e.frozen) continue;
+    // Indexed loops on the hot path: for...of here showed up in the
+    // allocation profile as iterator-result objects (README, Lab 7).
+    const list = this.#list;
+    const count = list.length;
+    for (let i = 0; i < count; i++) list[i]?.savePrevious();
+    for (let i = 0; i < count; i++) {
+      const e = list[i];
+      if (!e || !e.alive || e.frozen) continue;
       if (e.kind === "ship") {
         const controls = inputs.get(e.id);
         if (controls) e.controls = controls;
@@ -140,21 +165,24 @@ export class World {
       e.update(dt);
     }
 
-    for (const [a, b] of this.collisions(this)) {
-      if (a.alive && b.alive) resolveCollision(a, b, this);
-    }
+    this.collisions(this, this.#resolve);
 
     this.#runTimers(dt);
     for (const system of this.#systems) system(this, dt);
 
     this.#stepping = false;
-    for (const e of this.#pending) this.#entities.set(e.id, e);
+    for (const e of this.#pending) this.#add(e);
     this.#pending.length = 0;
     this.#sweep();
 
     this.time += dt;
     this.tick = tick(this.tick + 1);
   }
+
+  // Created once, not per step.
+  #resolve = (a: GameEntity, b: GameEntity): void => {
+    if (a.alive && b.alive) resolveCollision(a, b, this);
+  };
 
   #runTimers(dt: number): void {
     for (const t of this.#timers) t.left -= dt;
@@ -163,13 +191,22 @@ export class World {
     for (const t of due) t.fn();
   }
 
+  // Compacts the list in place, keeping order: no new array per step.
   #sweep(): void {
-    const dead: GameEntity[] = [];
-    for (const e of this.#entities.values()) if (!e.alive) dead.push(e);
-    for (const e of dead) {
+    const list = this.#list;
+    const count = list.length;
+    let kept = 0;
+    for (let i = 0; i < count; i++) {
+      const e = list[i];
+      if (!e) continue;
+      if (e.alive) {
+        list[kept++] = e;
+        continue;
+      }
       this.#entities.delete(e.id);
       e.world = null;
     }
+    list.length = kept;
   }
 }
 

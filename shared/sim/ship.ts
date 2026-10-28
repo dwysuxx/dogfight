@@ -53,27 +53,32 @@ export class Ship extends Entity {
     this.damage = damage;
   }
 
-  static fromSnapshot(data: ShipSnapshot, { players }: { players?: PlayerLookup } = {}): Ship {
+  static fromSnapshot(data: ShipSnapshot, context: { players?: PlayerLookup } = {}): Ship {
+    return new Ship({ pos: new Vector2(data.x, data.y), angle: data.angle }).applySnapshot(data, context);
+  }
+
+  // Everything except the position, in place: the renderer keeps one Ship per
+  // id and places it itself (interpolated), instead of a new Ship per frame.
+  applySnapshot(data: ShipSnapshot, { players }: { players?: PlayerLookup } = {}): this {
     const player = players?.get(data.owner);
-    const ship = new Ship({
-      pos: new Vector2(data.x, data.y),
-      angle: data.angle,
-      hp: data.hp,
-      name: data.bot ? "bot" : (player?.name ?? "pilot"),
-      color: data.bot ? "#ff8a8a" : (player?.color ?? "#e8f0ff"),
-      damage: data.bot ? 10 : 20,
-    });
-    ship.id = data.id;
-    ship.vel = new Vector2(data.vx, data.vy);
-    ship.score = data.score;
-    ship.playerId = data.owner;
-    ship.isBot = data.bot;
-    ship.thrusting = data.thrusting;
-    ship.fireCooldown = data.fireCooldown;
-    for (const [name, left] of Object.entries(data.effects)) {
-      if (isEffect(name) && left !== undefined) ship.effects.set(name, left);
+    this.id = data.id;
+    this.angle = data.angle;
+    this.#hp = data.hp;
+    this.name = data.bot ? "bot" : (player?.name ?? "pilot");
+    this.color = data.bot ? "#ff8a8a" : (player?.color ?? "#e8f0ff");
+    this.damage = data.bot ? 10 : 20;
+    if (this.vel.x !== data.vx || this.vel.y !== data.vy) this.vel = new Vector2(data.vx, data.vy);
+    this.score = data.score;
+    this.playerId = data.owner;
+    this.isBot = data.bot;
+    this.thrusting = data.thrusting;
+    this.fireCooldown = data.fireCooldown;
+    this.effects.clear();
+    for (const name of EFFECT_LIST) {
+      const left = data.effects[name];
+      if (left !== undefined) this.effects.set(name, left);
     }
-    return ship;
+    return this;
   }
 
   toSnapshot(): ShipSnapshot {
@@ -164,12 +169,15 @@ export class Ship extends Entity {
     this.fireCooldown = Math.max(0, this.fireCooldown - dt);
     this.contactCooldown = Math.max(0, this.contactCooldown - dt);
     // Updating/deleting the CURRENT key while iterating a Map is safe.
-    for (const [name, left] of this.effects) {
-      if (left - dt <= 0) this.effects.delete(name);
-      else this.effects.set(name, left - dt);
-    }
+    this.effects.forEach(this.#tickEffect, dt); // forEach: no iterator objects per step
+  }
+
+  #tickEffect = function (this: number, left: number, name: EffectName, effects: Map<EffectName, number>): void {
+    if (left - this <= 0) effects.delete(name);
+    else effects.set(name, left - this);
   }
 }
 
-const EFFECTS: ReadonlySet<string> = new Set<EffectName>(["shield", "rapidfire", "homing"]);
+const EFFECT_LIST: readonly EffectName[] = ["shield", "rapidfire", "homing"];
+const EFFECTS: ReadonlySet<string> = new Set<EffectName>(EFFECT_LIST);
 export const isEffect = (name: string): name is EffectName => EFFECTS.has(name);

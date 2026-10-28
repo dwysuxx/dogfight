@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 
 import { type PlayerId, type Seq, entityId, playerId, seq, tick } from "../brand.ts";
@@ -187,6 +187,14 @@ test("malformed binary frames are rejected with a code, never half-parsed", () =
   const [state] = gameSnapshots({ seed: 6, steps: 10 });
   assert.ok(state);
   reject(binary.encode(state).slice(0, 40), "invalid-message");
+});
+
+test("more than 255 events in one tick are capped, not thrown (a throw would freeze the server tick)", () => {
+  const events = Array.from({ length: 300 }, (_, i) => ({ type: "fired" as const, id: entityId(i) }));
+  const bytes = binary.encode({ type: "state", tick: tick(1), ack: seq(0), events, entities: [] });
+  const decoded = decodeState(bytes);
+  assert.equal(decoded.events.length, 255);
+  assert.equal(bytes.byteLength, 13 + 255 * 3);
 });
 
 test("binary is several times smaller than JSON for the same snapshot", () => {

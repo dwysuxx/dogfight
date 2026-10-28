@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "vitest";
 import { entityId, playerId, seq } from "@dogfight/shared/brand.ts";
 import type { BulletSnapshot, EntitySnapshot } from "@dogfight/shared/protocol.ts";
 import { type Sample, SnapshotBuffer, interpolateEntity } from "../src/snapshot-buffer.ts";

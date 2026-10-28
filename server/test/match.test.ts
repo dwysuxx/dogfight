@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { seq } from "@dogfight/shared/brand.ts";
 import type { Controls, InputFrame } from "@dogfight/shared/protocol.ts";

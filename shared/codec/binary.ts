@@ -141,8 +141,15 @@ function encodePong({ t, tick }: PongMessage): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
+// The events count is a u8. Events are cosmetic (sounds), so a tick with more
+// than 255 of them sends the first 255 instead of failing: a throw here would
+// escape the server's tick and freeze the match (found by the Lab 7 worker
+// experiment; covered by a test).
+const MAX_EVENTS = 0xff;
+const sentEvents = (state: StateMessage) => Math.min(state.events.length, MAX_EVENTS);
+
 export function stateSize(state: StateMessage): number {
-  let size = STATE_HEADER + state.events.length * 3;
+  let size = STATE_HEADER + sentEvents(state) * 3;
   for (const entity of state.entities) size += COMMON + KIND_SIZE[entity.kind];
   return size;
 }
@@ -206,21 +213,26 @@ function encodeEntity(view: DataView, o: number, e: EntitySnapshot): void {
 }
 
 function encodeState(state: StateMessage): Uint8Array<ArrayBuffer> {
-  if (state.entities.length > 0xffff || state.events.length > 0xff)
-    throw new RangeError("Snapshot is too large for the binary format");
+  if (state.entities.length > 0xffff) throw new RangeError("Snapshot has more entities than u16 ids allow");
+  const eventCount = sentEvents(state);
   const { bytes, view } = newFrame(stateSize(state), TYPE.STATE);
   view.setUint32(2, state.tick, LE);
   view.setUint32(ACK_OFFSET, state.ack, LE);
   view.setUint16(10, state.entities.length, LE);
-  view.setUint8(12, state.events.length);
+  view.setUint8(12, eventCount);
 
   let o = STATE_HEADER;
-  for (const event of state.events) {
+  const { events, entities } = state;
+  for (let i = 0; i < eventCount; i++) {
+    const event = events[i];
+    if (!event) continue;
     view.setUint8(o, EVENT_TYPES.indexOf(event.type));
     view.setUint16(o + 1, event.id, LE);
     o += 3;
   }
-  for (const entity of state.entities) {
+  for (let i = 0; i < entities.length; i++) {
+    const entity = entities[i];
+    if (!entity) continue;
     encodeEntity(view, o, entity);
     o += COMMON + KIND_SIZE[entity.kind];
   }

@@ -29,7 +29,11 @@ export function entityFromSnapshot(data: EntitySnapshot, { players }: { players?
 
 export function snapshotEntities(world: World): EntitySnapshot[] {
   const entities: EntitySnapshot[] = [];
-  for (const entity of world) if (entity.alive) entities.push(entity.toSnapshot());
+  const all = world.all;
+  for (let i = 0; i < all.length; i++) {
+    const entity = all[i];
+    if (entity?.alive) entities.push(entity.toSnapshot());
+  }
   return entities;
 }
 

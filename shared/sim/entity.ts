@@ -77,7 +77,11 @@ export abstract class Entity {
   }
 
   update(dt: number): void {
-    for (const behavior of this.behaviors) runBehavior(this, behavior, dt);
+    const behaviors = this.behaviors;
+    for (let i = 0; i < behaviors.length; i++) {
+      const behavior = behaviors[i];
+      if (behavior) runBehavior(this, behavior, dt);
+    }
     this.pos = this.pos.addScaled(this.vel, dt);
   }
 
