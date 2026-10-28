@@ -1,0 +1,32 @@
+{
+  // Baseline from Matt Pocock's tsconfig cheat sheet, tightened for this repo.
+  // Nothing is emitted: Vite (client) and Node's type stripping (server,
+  // tests) run the .ts files directly; tsc only checks.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+
+    // Runtime-honest imports: `import type` for types, and only syntax that
+    // can be erased (no enum, namespace or parameter properties), so Node can
+    // strip the types without a build step.
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node"]
+  }
+}

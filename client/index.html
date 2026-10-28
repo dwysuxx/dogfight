@@ -3,108 +3,329 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dogfight — Lab 5</title>
+    <title>Dogfight</title>
     <style>
       :root {
         color-scheme: dark;
-        font-family: "Courier New", monospace;
-        color: #e8f0ff;
-        background: #05060a;
+        --bg: #05060a;
+        --panel: rgba(16, 21, 34, 0.86);
+        --panel-border: rgba(127, 178, 255, 0.18);
+        --text: #e8f0ff;
+        --muted: #8d9ab3;
+        --accent: #ffd84a;
+        --accent-ink: #1a1405;
+        --cyan: #6de0df;
+        --danger: #ff7a7a;
+        --radius: 12px;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        color: var(--text);
+        background: var(--bg);
       }
       html,
       body {
         margin: 0;
         height: 100%;
-        background: #05060a;
+        background: var(--bg);
         overflow: hidden;
-      }
-      canvas {
-        display: block;
-        width: 100vw;
-        height: 100vh;
-      }
-      canvas[hidden] {
-        display: none;
       }
       [hidden] {
         display: none !important;
       }
-      #lobby,
+      canvas#game {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+        border: 0;
+        border-radius: 8px;
+        padding: 9px 16px;
+        font-weight: 600;
+        background: var(--accent);
+        color: var(--accent-ink);
+        transition: transform 0.08s ease, filter 0.15s ease;
+      }
+      button:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+      button:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+      button:disabled {
+        cursor: not-allowed;
+        background: #3a4255;
+        color: var(--muted);
+      }
+      button.ghost {
+        background: transparent;
+        color: var(--cyan);
+        border: 1px solid rgba(109, 224, 223, 0.35);
+        padding: 6px 12px;
+      }
+      :focus-visible {
+        outline: 2px solid var(--cyan);
+        outline-offset: 2px;
+      }
+
+      /* --- lobby ------------------------------------------------------- */
+      #lobby {
+        position: fixed;
+        inset: 0;
+        z-index: 2;
+        overflow: auto;
+        background:
+          radial-gradient(1200px 600px at 15% -10%, rgba(109, 224, 223, 0.16), transparent 60%),
+          radial-gradient(900px 500px at 110% 110%, rgba(255, 216, 74, 0.12), transparent 60%),
+          radial-gradient(1px 1px at 20% 30%, #fff8, transparent),
+          radial-gradient(1px 1px at 70% 60%, #fff6, transparent),
+          radial-gradient(1px 1px at 40% 80%, #fff5, transparent),
+          radial-gradient(1px 1px at 85% 20%, #fff7, transparent),
+          var(--bg);
+      }
+      .lobby-shell {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 48px 16px 32px;
+        box-sizing: border-box;
+      }
+      .lobby-hero {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+      .logo {
+        margin: 0;
+        font-size: clamp(40px, 8vw, 72px);
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        background: linear-gradient(180deg, #fff6c9, var(--accent) 55%, #f39b2b);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        text-shadow: 0 0 40px rgba(255, 216, 74, 0.25);
+      }
+      .tagline {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+      .lobby-grid {
+        display: grid;
+        grid-template-columns: minmax(240px, 300px) 1fr;
+        gap: 20px;
+        align-items: start;
+      }
+      @media (max-width: 760px) {
+        .lobby-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--panel-border);
+        border-radius: var(--radius);
+        padding: 20px;
+        backdrop-filter: blur(6px);
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+      }
+      .panel h2 {
+        margin: 0 0 12px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .panel h2:not(:first-child) {
+        margin-top: 24px;
+      }
+      .field {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+      }
+      .field input,
+      .create-room input,
+      .create-room select {
+        background: rgba(0, 0, 0, 0.35);
+        border: 1px solid var(--panel-border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        min-width: 0;
+      }
+      .field input {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .hint {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .keys {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 8px 12px;
+        margin: 0;
+        font-size: 13px;
+        align-items: center;
+      }
+      .keys dt {
+        white-space: nowrap;
+        color: var(--muted);
+      }
+      .keys dd {
+        margin: 0;
+      }
+      kbd {
+        display: inline-block;
+        min-width: 18px;
+        padding: 2px 6px;
+        margin: 0 1px;
+        border-radius: 5px;
+        border: 1px solid #4a5570;
+        border-bottom-width: 2px;
+        background: #1a2133;
+        color: var(--text);
+        font: 12px/1.4 ui-monospace, "Cascadia Mono", monospace;
+        text-align: center;
+      }
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .panel-head h2 {
+        margin: 0;
+      }
+      .room-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+      .room-card {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        transition: border-color 0.15s ease, background 0.15s ease;
+      }
+      .room-card:hover {
+        border-color: rgba(255, 216, 74, 0.4);
+        background: rgba(255, 216, 74, 0.05);
+      }
+      .room-card strong {
+        display: block;
+        font-size: 16px;
+        overflow-wrap: anywhere;
+      }
+      .room-meta {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .occupancy {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font: 13px ui-monospace, monospace;
+        color: var(--muted);
+      }
+      .occupancy progress {
+        width: 72px;
+        height: 6px;
+        accent-color: var(--cyan);
+      }
+      .room-empty {
+        padding: 18px;
+        text-align: center;
+        color: var(--muted);
+        border: 1px dashed var(--panel-border);
+        border-radius: 10px;
+      }
+      .create-room {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--panel-border);
+      }
+      @media (max-width: 520px) {
+        .room-card,
+        .create-room {
+          grid-template-columns: 1fr;
+        }
+      }
+      .status {
+        min-height: 1.4em;
+        margin: 16px 0 0;
+        text-align: center;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .status[data-kind="error"] {
+        color: var(--danger);
+      }
+
+      /* --- loading ----------------------------------------------------- */
       #loading {
         position: fixed;
         inset: 0;
+        z-index: 2;
         display: grid;
         place-content: center;
         gap: 12px;
-        background: rgba(5, 6, 10, 0.96);
-        z-index: 2;
-      }
-      #lobby {
-        width: min(460px, calc(100vw - 48px));
-        margin: auto;
-        padding: 24px;
-        box-sizing: border-box;
-      }
-      #loading {
         text-align: center;
-      }
-      #lobby h1 {
-        margin: 0;
-        color: #ffd84a;
-      }
-      #lobby form {
-        display: grid;
-        gap: 12px;
-      }
-      #lobby label {
-        line-height: 1.8;
-      }
-      #lobby input,
-      #lobby button,
-      #loading button {
-        padding: 8px 12px;
-        font: inherit;
-      }
-      #lobby fieldset {
-        border: 1px solid #53617a;
-      }
-      #lobby button,
-      #loading button {
-        color: #05060a;
-        background: #ffd84a;
-        border: 0;
-        border-radius: 4px;
-        cursor: pointer;
+        background: rgba(5, 6, 10, 0.96);
       }
       #loading-progress {
         width: min(360px, 75vw);
-        height: 18px;
-        accent-color: #ffd84a;
+        height: 10px;
+        accent-color: var(--accent);
       }
+
+      /* --- in game ----------------------------------------------------- */
       #game-hud {
         position: fixed;
         top: 8px;
         right: 8px;
-        color: #e8f0ff;
-        font: 13px/1.5 "Courier New", monospace;
+        font: 13px/1.5 ui-monospace, "Courier New", monospace;
         background: rgba(0, 0, 0, 0.4);
         padding: 6px 10px;
-        border-radius: 4px;
+        border-radius: 6px;
         pointer-events: none;
         white-space: pre;
         text-align: right;
+      }
+      #game-hud:empty {
+        display: none;
       }
       #hud {
         position: fixed;
         right: 8px;
         bottom: 88px;
         color: #7cfc7c;
-        font: 12px/1.4 "Courier New", monospace;
+        font: 12px/1.4 ui-monospace, "Courier New", monospace;
         background: rgba(0, 0, 0, 0.4);
         padding: 6px 10px;
-        border-radius: 4px;
+        border-radius: 6px;
         pointer-events: none;
         white-space: pre;
+      }
+      #hud:empty {
+        display: none;
       }
       #netgraph-plot {
         position: fixed;
@@ -113,6 +334,28 @@
         width: 360px;
         height: 72px;
         pointer-events: none;
+        border-radius: 6px;
+      }
+      .game-controls {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        z-index: 1;
+        display: flex;
+        gap: 8px;
+      }
+      .game-controls button {
+        padding: 7px 12px;
+        font-size: 13px;
+      }
+      #mute-toggle {
+        background: rgba(16, 21, 34, 0.85);
+        color: var(--text);
+        border: 1px solid var(--panel-border);
+      }
+      #mute-toggle[aria-pressed="true"] {
+        color: var(--danger);
+        border-color: rgba(255, 122, 122, 0.45);
       }
       #game-chat {
         position: fixed;
@@ -121,8 +364,9 @@
         z-index: 1;
         width: min(340px, calc(100vw - 32px));
         padding: 10px;
+        border-radius: 8px;
         background: rgba(0, 0, 0, 0.7);
-        font: 12px/1.5 "Courier New", monospace;
+        font: 12px/1.5 ui-monospace, "Courier New", monospace;
       }
       #game-chat ol {
         max-height: 140px;
@@ -136,23 +380,10 @@
       #game-chat input {
         min-width: 0;
         flex: 1;
-        font: inherit;
+        padding: 4px 6px;
       }
-      #game-chat button,
-      #leave-game {
-        padding: 6px 10px;
-        font: inherit;
-        color: #05060a;
-        background: #ffd84a;
-        border: 0;
-        border-radius: 4px;
-        cursor: pointer;
-      }
-      #leave-game {
-        position: fixed;
-        left: 16px;
-        top: 16px;
-        z-index: 1;
+      #game-chat button {
+        padding: 4px 10px;
       }
     </style>
   </head>
@@ -160,16 +391,19 @@
     <canvas id="game" hidden></canvas>
     <div id="hud" aria-label="Netgraph"></div>
     <canvas id="netgraph-plot" width="360" height="72" hidden></canvas>
-    <div id="game-hud"></div>
+    <div id="game-hud" aria-live="polite"></div>
     <aside id="game-chat" hidden aria-label="Room chat">
       <strong id="room-roster">Connecting to room…</strong>
       <ol id="chat-messages" aria-live="polite"></ol>
       <form id="chat-form">
-        <input id="chat-input" maxlength="500" autocomplete="off" placeholder="Message the room">
+        <input id="chat-input" maxlength="500" autocomplete="off" placeholder="Message the room" />
         <button type="submit">Send</button>
       </form>
     </aside>
-    <button id="leave-game" type="button" hidden>Leave room</button>
+    <div class="game-controls">
+      <button id="leave-game" type="button" hidden>← Leave room</button>
+      <button id="mute-toggle" type="button" aria-pressed="false" hidden>🔊 Sound on</button>
+    </div>
     <section id="lobby" aria-label="Game lobby"></section>
     <section id="loading" aria-live="polite" hidden>
       <strong id="loading-status">Preparing game…</strong>
@@ -180,6 +414,6 @@
         <button id="back-to-lobby" type="button" hidden>Back to lobby</button>
       </div>
     </section>
-    <script type="module" src="./src/main.js"></script>
+    <script type="module" src="./src/main.ts"></script>
   </body>
 </html>

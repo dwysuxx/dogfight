@@ -1,0 +1,43 @@
+import { Entity } from "./entity.ts";
+import { createSpawner, spawnAsteroid } from "./spawner.ts";
+import { Ship } from "./ship.ts";
+import { Vector2 } from "./vector.ts";
+import { World } from "./world.ts";
+
+export interface GameOptions {
+  width?: number;
+  height?: number;
+  seed?: number;
+  asteroids?: number;
+  withBot?: boolean;
+  withPlayer?: boolean;
+  assignIds?: boolean;
+}
+
+// Builds a ready-to-run game: world + player (+ optional bot) + asteroids.
+// The server passes withPlayer: false (players join later) and assignIds: true
+// (per-room numeric ids that fit the binary snapshot).
+export function createGame({
+  width = 960,
+  height = 540,
+  seed = 1,
+  asteroids = 6,
+  withBot = true,
+  withPlayer = true,
+  assignIds = false,
+}: GameOptions = {}): { world: World; player: Ship | null; bot: Ship | null } {
+  Entity.resetIds();
+  const world = new World({ width, height, seed, assignIds });
+
+  const player = withPlayer
+    ? world.spawn(new Ship({ pos: new Vector2(width / 3, height / 2), color: "#e8f0ff", name: "player" }))
+    : null;
+  const bot = withBot
+    ? world.spawn(new Ship({ pos: new Vector2((width * 2) / 3, height / 2), color: "#ff8a8a", name: "bot", damage: 10 }))
+    : null;
+  if (bot) bot.isBot = true;
+
+  for (let i = 0; i < asteroids; i++) spawnAsteroid(world, { inside: true });
+  world.addSystem(createSpawner({ asteroids }));
+  return { world, player, bot };
+}

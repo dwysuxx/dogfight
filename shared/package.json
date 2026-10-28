@@ -9,9 +9,10 @@
   },
   "scripts": {
     "test": "node --test",
-    "lint": "eslint sim protocol codec net test"
+    "typecheck": "tsc -p . --noEmit",
+    "lint": "eslint ."
   },
-  "devDependencies": {
-    "eslint": "^9.9.0"
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }

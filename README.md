@@ -1,62 +1,151 @@
-# Dogfight — Лабораторна 5: авторитетний сервер, prediction і бінарний протокол
+# Dogfight — Лабораторна 6: TypeScript для протоколу, симуляції й обох боків з'єднання
 
 > **GIF двох гравців:** запишіть 20 секунд двох вікон поруч (`?lag=50&jitter=30&drop=0.02`, див. нижче), збережіть як `docs/lab-05-two-players.gif` і розкоментуйте рядок нижче.
 <!-- ![Два гравці, ~100 ms RTT ±30 ms, 2% втрат](docs/lab-05-two-players.gif) -->
 
-Лаба продовжує [лабу 4](https://github.com/dwysuxx/dogfight/tree/lab04). Тепер є один авторитетний сервер, який рахує симуляцію з частотою **30 Hz**. Клієнти надсилають лише **inputs**, а сервер у відповідь розсилає **snapshots**. Власний корабель клієнт **передбачає** (prediction) й **узгоджує** з сервером (reconciliation). Чужі кораблі він **інтерполює** в минулому. Знімки йдуть **бінарним протоколом** на `DataView`.
+Лаба продовжує [лабу 5](https://github.com/dwysuxx/dogfight/tree/lab05): авторитетний сервер 30 Hz, prediction і reconciliation, інтерполяцію та бінарний протокол. Тепер **увесь код (три пакети й тести) переписано на TypeScript** під `strict` + `noUncheckedIndexedAccess` + `verbatimModuleSyntax`.
+
+- **Один протокол.** `shared/protocol.ts` — єдине джерело правди: zod-схеми → виведені типи → runtime-перевірка на кожній межі.
+- **Типізовані дані.** Discriminated unions з вичерпними `never`-гілками, branded id, `readonly` вектори й snapshots.
+- **Нульова кількість приведень типів.** **0 `as`** (дозволено до 5) і **0 `any`**; обидва заборонено правилами ESLint.
+- **Runtime не змінився.** Хеш детермінізму до й після міграції однаковий: `313ef01b`.
+
+Також у цій версії: **перероблений вхід у лобі** і **кнопка вимкнення звуку** (`M`).
 
 ## Запуск
 
-Потрібен Node.js 22+.
+Потрібен Node.js **22.18+** (сервер і тести запускають `.ts` напряму через вбудоване в Node видалення типів, без кроку збирання).
 
 ```powershell
 npm ci
-npm run build
-npm start                 # http://127.0.0.1:3000
+npm run build             # tsc --noEmit для клієнта + vite build
+npm start                 # node server/src/index.ts → http://127.0.0.1:3000
 ```
 
-Для розробки використовуйте `npm run dev` (сервер) і `npm run dev:client` (Vite, `http://localhost:5173`). Інші команди: `npm test` (усі три пакети), `npm run lint`, `npm run netbench` (заміри для таблиць нижче).
-
-**Параметри сторінки:**
-
-| URL | Що робить |
+| Команда | Що робить |
 |---|---|
-| `?lag=50&jitter=30&drop=0.02` | штучна мережа для цього з'єднання: затримка 50 мс **в кожен бік** + випадкові 0–30 мс, 2% втрачених inputs/snapshots (≈100 мс RTT ±30) |
-| `?codec=json` | JSON замість бінарного кодека (для порівняння) |
-| `?chaos=1` | експеримент «зламаний детермінізм»: `Math.random()` у кроці prediction |
+| `npm run typecheck` | `tsc -p . --noEmit` у кожному пакеті (`shared`, `client`, `server`) |
+| `npm run lint` | ESLint + typescript-eslint на весь workspace |
+| `npm test` | `node --test` — усі `*.test.ts` трьох пакетів |
+| `npm run check` | усе разом: typecheck → lint → test |
+| `npm run dev` / `npm run dev:client` | сервер із `--watch` / Vite на `http://localhost:5173` |
+| `npm run netbench` | заміри кодеків, netcode і таймерів (таблиці нижче) |
 
-**Клавіші (netgraph):** `[` / `]` — interpolation delay ±16 мс; `L` — перемикає мережеві пресети (вимкнено → ~100 → ~200 → ~300 мс RTT) просто під час гри; `P` — prediction увімк./вимк.; `I` — interpolation увімк./вимк.; `N` — сховати netgraph.
+CI (`.github/workflows/ci.yml`) запускає `npm ci → typecheck → lint → test → build` на кожен push і PR.
 
-Сервер теж має параметри за замовчуванням для всіх з'єднань: `NET_LAG_MS`, `NET_JITTER_MS`, `NET_DROP` у `.env`. `GET /api/stats` показує тривалість і jitter тіку, overruns, лічильники inputs (applied / frozen / catch-up / dropped), а також для кожного клієнта codec, умови netsim і bytes/s за останню секунду.
+**Параметри сторінки:** `?lag=50&jitter=30&drop=0.02` — штучна мережа (мс в кожен бік); `?codec=json` — JSON замість бінарного кодека; `?chaos=1` — експеримент «зламаний детермінізм».
 
-Перевірка вручну: відкрийте дві вкладки з `?lag=50&jitter=30&drop=0.02` і зайдіть в одну кімнату. Власний корабель реагує миттєво, correction у netgraph тримається біля 0 і стрибає лише при зіткненнях. Натисніть `P`: тепер корабель рухається тільки зі snapshots, на повний RTT пізніше. Так відчувається M1.
+**Клавіші в грі:** стрілки або `A`/`D` — поворот, `↑`/`W` — тяга, `Space` — постріл, **`M` — звук увімк./вимк.**, `N` — netgraph, `[` / `]` — interpolation delay, `L` — мережеві пресети, `P` / `I` — prediction / interpolation.
+
+## Що нового в інтерфейсі
+
+- **Лобі.** Тепер це екран з логотипом і двома панелями:
+  - «Pilot»: позивний, який запам'ятовується в `localStorage`, і шпаргалка клавіш;
+  - «Rooms»: картки кімнат із розміром арени, кількістю астероїдів, смужкою заповненості (`2/16`) і власною кнопкою **Join** (для повної кімнати кнопка неактивна, напис «Full»).
+
+  Нову кімнату можна створити з вибором арени (Small 960×540 / Large 1280×720). Помилки показуються червоним рядком статусу. На вузькому екрані панелі стають в одну колонку.
+- **Звук.** Кнопка 🔊/🔇 поруч із «Leave room» і клавіша `M`. Звук іде через один master `GainNode`, тому вимкнення — це плавна зміна gain (15 мс), а не пропуск звуків. Вибір запам'ятовується між сесіями. Якщо Web Audio недоступний, кнопка неактивна.
+- Назви кімнат і гравців приходять від інших людей, тому в DOM вони потрапляють лише через `textContent`, ніколи через `innerHTML`.
+
+## TypeScript: як влаштовано
+
+**Тулчейн.**
+- **tsconfig.** `tsconfig.base.json` побудовано за [tsconfig cheat sheet](https://www.totaltypescript.com/tsconfig-cheat-sheet): `strict`, `noUncheckedIndexedAccess`, `noImplicitOverride`, `verbatimModuleSyntax`, `erasableSyntaxOnly`, `allowImportingTsExtensions`, `noEmit`. Кожен пакет має свій `tsconfig.json`; клієнт додає DOM lib і `moduleResolution: "bundler"`.
+- **Хто виконує TypeScript.** Vite перетворює `.ts` через esbuild і типи не перевіряє, тому `build` спершу запускає `tsc --noEmit`. Node 24 сам видаляє типи з `.ts`. Звідси `erasableSyntaxOnly`: жодних `enum`, `namespace` і parameter properties. Наприклад, `constructor(readonly x)` у `Vector2` довелося замінити звичайними полями.
+- **TypeScript 6.0, а не 7.** Пакет `typescript@7` (нативний Go-порт) уже вийшов, але `typescript-eslint` поки підтримує лише `<6.1`.
+
+**`shared/protocol.ts`.** Тут лежать zod-схеми **усіх** повідомлень в обидва боки: join, chat, input, ping, netsim, joined, roster, chat, error, state, pong, а також HTTP `RoomInfo` і `CreateRoomRequest`.
+- **Типи.** Усі типи виведені через `z.infer`, тому тип і перевірка не можуть розійтися.
+- **Розбір.** `parseClientMessage(value: unknown): Result<ClientMessage>` ніколи не кидає виняток і повертає код помилки на кшталт `invalid-join`; сервер відповідає `error` і закриває з'єднання (1008, або 1002 для старої версії). Рукописний валідатор із лаб 4–5 видалено.
+- **Клієнт теж перевіряє вхідне.** Кожне JSON-повідомлення від сервера він пропускає через `parseServerMessage`, а відповідь лобі — через `RoomsResponseSchema`.
+
+**Кодеки.** Інтерфейс `Codec { name; encode(msg): Payload; decode(payload): Result<RealtimeMessage> }` має дві реалізації: `jsonCodec` і `binaryCodec`, обидві оголошені через `satisfies Codec`. Бінарний декодер **сам є валідатором**: він перевіряє версію, тип, довжину кадру, зарезервовані біти й послідовність `seq` і повертає `Result`, а не кидає виняток. Кожен `switch` по `type` чи `kind` закінчується `default: assertNever(x)`.
+
+**Події.**
+- `Room extends EventEmitter<RoomEvents>` (генерик Node): `room.emit("join", 42)` не компілюється.
+- `World`, лобі, з'єднання й сесія клієнта мають типізований `Bus<E>` (`shared/bus.ts`). `World` більше не наслідує `EventTarget`, бо `CustomEvent.detail` завжди `any`.
+
+**Конфіг сервера** — zod-схема над `process.env` зі значеннями за замовчуванням; `ServerConfig` = `z.output<typeof EnvSchema>`. Кожен `catch` має явний тип `unknown` і звужується через `instanceof Error` чи `errorCode()`.
+
+## Що знайшов TypeScript
+
+Міграція виявила реальні проблеми, а не лише відсутні анотації:
+
+1. **Ідентифікатори сутностей не вміщалися в протокол.** Глобальний лічильник id в `Entity` ріс без меж, а протокол передає id як `u16`. Клієнт створює сутності з кожного snapshot щокадру, тож за ~хвилину гри id перевалили б за 65535. З branded `EntityId` це стало помилкою компіляції; лічильник тепер обертається в межах `1..65535`.
+2. **Рядкові id у передбачуваному світі (`"p1"`).** Вони несумісні з числовим `EntityId`, тому світ prediction тепер призначає числові id сам і пропускає зайняті.
+3. **`Bullet.ownerId` записувався, але ніде не був оголошений.** `toSnapshot()` для кулі, відновленої зі snapshot без об'єкта `Ship`, повертав власника `0`. Латентний баг: поле тепер оголошене й використовується як запасне значення.
+4. **Довільні поля на чужих об'єктах.** `error.retryable = false` писався на звичайні `Error` і `AggregateError`, `socket.isAlive` — на `WebSocket`. Тепер це класи `LoadError` / `RequiredAssetsError` і поле `alive` у записі клієнта.
+5. **Дані лобі ніхто не перевіряв.** Тестові кімнати `{ id, name }` без `players`, `capacity` і `arena` проходили, а UI показав би «undefined/undefined pilots». Тепер їх відкидає `RoomInfoSchema`.
+6. **JSON-snapshots на клієнті взагалі не валідувалися** (`JSON.parse` → одразу в рендер). Тепер це `StateMessageSchema`.
+7. **`rng.pick([])` мовчки повертав `undefined`.** Завдяки `noUncheckedIndexedAccess` тепер кидає `RangeError`.
+8. **`catch (error)` з `error.message`** у HTTP, replay і view: виняток, що не є `Error`, друкувався як `undefined`.
+9. **`Uint8Array<ArrayBufferLike>` не можна передати в `WebSocket.send`.** Подання над `SharedArrayBuffer` не є `BufferSource`, тому кодек тепер повертає `Uint8Array<ArrayBuffer>`.
+10. **Резервна арена в `main` була без поля `asteroids`.** Шкоди не було (використовувались лише розміри), але тепер арена завжди береться з перевіреного `RoomInfo` або `joined`.
+
+**Ціна:**
+- zod-перевірка кожного JSON-snapshot подвоїла час JSON encode+decode (68 → 134 µs). Бінарний шлях майже не змінився (30 → 37 µs).
+- Клієнтський бандл виріс з 59 KB до 168 KB (52 KB gzip), майже весь приріст — це zod. Можливе покращення: збірка `zod/mini`.
+
+## Три цікаві типи
+
+**1. Branded id без жодного `as`** (`shared/brand.ts`):
+```ts
+export type EntityId = number & { readonly [brand]: "EntityId" };
+export const isEntityId = (n: number): n is EntityId => Number.isInteger(n) && n >= 0 && n <= 0xffff;
+export const entityId = (n: number): EntityId => { if (!isEntityId(n)) throw new RangeError(...); return n; };
+```
+Під час виконання `EntityId` — звичайне число. Але `Tick` чи `Seq` на його місце вже не передати: «бренд» є лише в типі. Зробити `EntityId` можна тільки через функцію-перевірку діапазону. Вона пише `n is EntityId` («якщо я повернула true, це число — EntityId»), тож цей шлях і безпечний, і обходиться без приведення типу.
+
+**2. Протокол як discriminated union із zod** (`shared/protocol.ts`):
+```ts
+export const ClientMessageSchema = z.discriminatedUnion("type", [JoinMessageSchema, ChatMessageSchema, InputMessageSchema, ...]);
+export type ClientMessage = z.infer<typeof ClientMessageSchema>;
+switch (message.type) { case "join": …; case "input": …; default: return assertNever(message); }
+```
+Одна схема дає і перевірку під час виконання, і тип. Усередині `case "input"` TypeScript знає, що `message.inputs` існує. Якщо додати в схему новий тип повідомлення й забути його обробити, `assertNever(message)` перестане компілюватися: там, де всі варіанти розібрано, залишок має тип `never`.
+
+**3. `ofKind` з умовним типом** (`shared/sim/world.ts`):
+```ts
+*ofKind<K extends GameEntity["kind"]>(kind: K): Generator<Extract<GameEntity, { kind: K }>>
+```
+`GameEntity = Ship | Bullet | Asteroid | Pickup | Explosion`. Виклик `world.ofKind("ship")` повертає `Ship`, а не загальну сутність: `Extract` вибирає з об'єднання ті варіанти, у яких `kind` дорівнює переданому рядку. Звуження зроблене функцією-перевіркою `isKind(e, kind): e is Extract<…>`, тому знову без приведення.
+
+## Фреймворк для лобі: ні, і чому
+
+Лобі й HUD лишилися на vanilla TypeScript + DOM, а лобі натомість отримало новий дизайн:
+- **Розмір.** Лобі — один екран із кількома подіями. Типізований `Bus<LobbyEvents>` і `replaceChildren()` покривають усе, що дав би фреймворк.
+- **Бандл.** Він уже виріс на ~31 KB gzip через zod; React додав би ще ~45 KB.
+- **Збірка.** Фреймворк приніс би JSX або `.svelte`-компілятор, додаткові плагіни Vite і власну модель реактивності поверх ігрового циклу, який все одно лишається vanilla canvas.
+- **Що втрачено.** Рендеринг зміненого списку кімнат вручну (`renderRooms` перебудовує список цілком) і відсутність компонентної ізоляції стилів. Для одного екрана це прийнятно.
 
 ## Структура
 
 ```text
-shared/                 @dogfight/shared — npm workspace, імпортується клієнтом і сервером
-  sim/                  симуляція (перенесена з client/src/sim), toSnapshot/fromSnapshot, ai.js
-  sim/snapshot.js       entityFromSnapshot, snapshotEntities, hashWorld
-  sim/scenario.js       сценарій детермінізму (Node-тест і dogfightDeterminism() у браузері)
-  protocol/messages.js  версія, типи повідомлень, TICK_RATE, кнопки-біти, validateInputs
-  codec/json.js         JSON-кодек (базова лінія)
-  codec/binary.js       DataView-кодек + специфікація формату
-  net/prediction.js     Predictor: prediction, reconciliation, smoothing
-server/src/
-  match.js              Match: авторитетна симуляція кімнати, черги inputs, ack
-  ticker.js             30 Hz на абсолютних цілях часу + статистика
-  netsim.js             latency/jitter/drop injector
-  ws.js                 сокети, кодеки, розсилка snapshots, rate limit, /api/stats
-  tools/headless.js     безголовий netcode-прогін у віртуальному часі
-  tools/netbench.js     заміри для README
+tsconfig.base.json        спільні строгі опції; кожен пакет має свій tsconfig.json
+eslint.config.js          typescript-eslint; заборонені any, as-приведення, non-null (!)
+shared/                   @dogfight/shared — імпортується клієнтом і сервером
+  protocol.ts             zod-схеми → типи; parseClientMessage/parseServerMessage; assertNever
+  brand.ts, bus.ts        branded EntityId/PlayerId/Tick/Seq; типізований Bus<E>
+  sim/                    симуляція: GameEntity union, readonly Vector2, toSnapshot/fromSnapshot
+  codec/                  Codec-інтерфейс; json.ts і binary.ts (DataView + специфікація)
+  net/prediction.ts       Predictor: prediction, reconciliation, smoothing
+server/src/               Node запускає .ts напряму
+  config.ts               zod-схема середовища → ServerConfig
+  rooms.ts                Room/RoomManager на EventEmitter<Events>
+  frames.ts               кадр WebSocket → Result<ClientMessage>
+  match.ts, ticker.ts, netsim.ts, ws.ts, http.ts, log/, tools/
 client/src/
-  net/session.js        клієнтський netcode: inputs, predictor, інтерполяція, метрики
-  net/netgraph.js       оверлей: RTT, вік snapshot, bytes/s, pending, correction, графік
-  snapshot-buffer.js    буфер інтерполяції з регульованою затримкою
-  connection.js         WebSocket: JSON + binaryType "arraybuffer", reconnect
+  dom.ts                  byId/query через instanceof (без приведень), localStorage-обгортка
+  lobby/                  Lobby (Bus<LobbyEvents>) і новий вигляд лобі
+  audio.ts                master GainNode, mute
+  net/, connection.ts, snapshot-buffer.ts (генерик SnapshotBuffer<S>), render/
 ```
 
-Пакет `shared/` не має доступу ні до DOM, ні до вбудованих модулів Node: лише можливості мови, `EventTarget` і `TextEncoder`. Це перевіряють тест `shared/test/determinism.test.js` (імпорт у Node без `window` + статичний пошук `document`, `node:`, `Math.random(`, `Date.now(`) і ESLint (`no-restricted-properties` забороняє `Math.random` і `Date.now`).
+Пакет `shared/` не має доступу ні до DOM, ні до вбудованих модулів Node. Це перевіряють `shared/test/determinism.test.ts` (імпорт у Node без `window` + статичний пошук заборонених викликів) і ESLint.
+
+---
+
+# Netcode (з лаби 5)
 
 ## Як це працює
 
@@ -67,11 +156,11 @@ client/src/
 **Тонке місце — час inputs.** Клієнт передбачив input N поверх N−1, тож сервер мусить застосувати їх так само, хоч би що зробила мережа:
 - якщо цього тіку input для корабля немає (jitter), корабель **заморожується**. Повторювати останній input не можна, бо такого input клієнт не надсилав.
 - якщо після затримки прийшла пачка, зайві inputs виконуються як **окремі під-кроки корабля**, і черга не додає латентності.
-- наздоганяти можна лише за «кредит», що накопичується по 1 на тік (максимум 6). Клієнт, який шле 60 inputs/с, не літає вдвічі швидше (speed hack): надлишок відкидається (`server/test/match.test.js`).
+- наздоганяти можна лише за «кредит», що накопичується по 1 на тік (максимум 6). Клієнт, який шле 60 inputs/с, не літає вдвічі швидше (speed hack): надлишок відкидається (`server/test/match.test.ts`).
 
 Завдяки цьому при 300 мс RTT, ±100 jitter і 5% втрат correction у відкритому космосі становить ~0.002 px (таблиця нижче).
 
-**Prediction + reconciliation** (`shared/net/prediction.js`). Клієнт тримає приватний маленький `World` лише з власним кораблем і власними кулями. Input застосовується одразу, тим самим кодом `Ship.update`, що й на сервері. Коли приходить snapshot:
+**Prediction + reconciliation** (`shared/net/prediction.ts`). Клієнт тримає приватний маленький `World` лише з власним кораблем і власними кулями. Input застосовується одразу, тим самим кодом `Ship.update`, що й на сервері. Коли приходить snapshot:
 1. корабель і кулі скидаються до серверного стану (`Ship.fromSnapshot`, `Bullet.fromSnapshot`);
 2. inputs з `seq ≤ ack` відкидаються;
 3. решта програється заново.
@@ -86,7 +175,7 @@ client/src/
 
 ## Бінарний протокол (v1)
 
-Повна специфікація — коментар на початку `shared/codec/binary.js`. Коротко: **little-endian скрізь**, байт 0 — тип, байт 1 — версія. Кадр із невідомим типом, неправильною довжиною чи ненульовими зарезервованими бітами відхиляється цілком, а не розбирається частково.
+Повна специфікація — коментар на початку `shared/codec/binary.ts`. Коротко: **little-endian скрізь**, байт 0 — тип, байт 1 — версія. Кадр із невідомим типом, неправильною довжиною чи ненульовими зарезервованими бітами відхиляється цілком, а не розбирається частково.
 
 | Повідомлення | Розмітка |
 |---|---|
@@ -99,7 +188,7 @@ client/src/
 
 **Квантування кута.** `Int16` з кроком 1/1000 rad (кут спершу загортається в (−π, π], тож ±3142 вміщується) дає похибку до 0.0005 rad. На носі корабля (14 px) це 0.007 px, на кулі за 500 px — 0.25 px. Обидві величини менші за піксель, тому вистачає. Таймери (`fireCooldown`, `ttl`) мають крок 0.1 мс, бо від них залежить, чи вистрілить передбачений корабель у тому ж тіку, що й серверний.
 
-Тести round-trip (`shared/test/codec.test.js`) проганяють понад 200 справжніх snapshots: `decode(encode(msg))` збігається з `msg` у межах квантування кожного поля. Окремо перевірено little-endian розмітку байтів, `withAck` і відхилення пошкоджених кадрів.
+Тести round-trip (`shared/test/codec.test.ts`) проганяють понад 200 справжніх snapshots: `decode(encode(msg))` збігається з `msg` у межах квантування кожного поля. Окремо перевірено little-endian розмітку байтів, `withAck` і відхилення пошкоджених кадрів.
 
 ## Заміри (`npm run netbench`, Windows 10, Node 24)
 
@@ -112,7 +201,7 @@ client/src/
 
 Бінарний варіант у **7.5× менший** і в 2.2× швидший. «Up» — повідомлення з 4 inputs (redundancy) 30 разів на секунду: 23 байти проти ~350.
 
-**Reconciliation correction**, безголовий прогін (`server/src/tools/headless.js`): реальні `Match` і `Predictor`, віртуальний час, кожне повідомлення проходить бінарний кодек, 2 пілоти, 20 с:
+**Reconciliation correction**, безголовий прогін (`server/src/tools/headless.ts`): реальні `Match` і `Predictor`, віртуальний час, кожне повідомлення проходить бінарний кодек, 2 пілоти, 20 с:
 
 | Умови | Mean px | p95 px | Max px | Frozen ticks | Catch-up sub-steps |
 |---|---|---|---|---|---|
@@ -122,7 +211,7 @@ client/src/
 | ~100 ms RTT + астероїди + бот | 0.0390 | 0.0017 | 21.820 | 244 | 255 |
 | ~100 ms RTT, `Math.random()` у кроці клієнта | 0.5274 | 1.5098 | 3.041 | 259 | 255 |
 
-Залишкові ~0.001 px — це квантування `f32`. Сплески до 22 px дають лише зіткнення, яких клієнт не може передбачити. Ці сценарії стали регресійним тестом `server/test/netcode.test.js`.
+Залишкові ~0.001 px — це квантування `f32`. Сплески до 22 px дають лише зіткнення, яких клієнт не може передбачити. Ці сценарії стали регресійним тестом `server/test/netcode.test.ts`.
 
 **Таймери**, 5 с, ціль 33.33 мс:
 
@@ -135,7 +224,7 @@ client/src/
 
 ## Детермінізм
 
-`shared/sim/scenario.js` проганяє гру 1000 кроків на скриптових inputs і рахує FNV-хеш точних бітів float-ів (через `DataView`, little-endian). Node дає `313ef01b` (зафіксовано в тесті). Щоб перевірити браузер, відкрийте DevTools і виконайте `dogfightDeterminism().hash`: має вийти те саме значення.
+`shared/sim/scenario.ts` проганяє гру 1000 кроків на скриптових inputs і рахує FNV-хеш точних бітів float-ів (через `DataView`, little-endian). Node дає `313ef01b` (зафіксовано в тесті). Щоб перевірити браузер, відкрийте DevTools і виконайте `dogfightDeterminism().hash`: має вийти те саме значення.
 
 **Навмисно зламаний детермінізм** (`?chaos=1`). Кожен крок prediction множить швидкість на `1 ± 4%·Math.random()`. У netgraph correction піднімається з ~0.00 до 0.5–3 px на кожному snapshot, і корабель помітно «підтягується». На сервері такого шуму немає, тож розбіжність видно одразу. Цифри наведено в останньому рядку таблиці correction вище. `Math.random()`, `Date.now()` чи обхід колекції в порядку, що залежить від середовища, дали б той самий симптом на кожному клієнті.
 
@@ -167,7 +256,7 @@ Typed array використовує порядок байтів процесо�
 ## Відповіді для дошки (коротко)
 
 1. **Чому сервер авторитетний?** У клієнт-авторитетній моделі гравці бачать різні ігри (дрейф, втрати), а чітер може телепортуватися: досить у DevTools надіслати `{x: …}` замість inputs. Тут сервер приймає лише кнопки.
-2. **Prediction** покладається на детермінізм: той самий стан і ті самі inputs дають той самий результат. Його порушення видно як correction понад нуль у відкритому космосі (netgraph, `netcode.test.js`, `?chaos=1`).
+2. **Prediction** покладається на детермінізм: той самий стан і ті самі inputs дають той самий результат. Його порушення видно як correction понад нуль у відкритому космосі (netgraph, `netcode.test.ts`, `?chaos=1`).
 3. **Сценарій із snapshot тіку 100 (ack 57) і буфером 55–61.** Корабель скидається до стану зі snapshot, inputs 55–57 відкидаються, 58–61 програються заново. Корабель знову «на 4 inputs попереду», і якщо прогноз був правильний, нічого не зрушить.
 4. **Інтерполяція в минулому:** щоб завжди мати дві точки для лінійної інтерполяції. Затримка — це обмін між свіжістю і стійкістю до jitter та втрат; обрано 100 мс.
 5. **Lag compensation:** сервер перевіряє постріл проти стану, який бачив стрілець (now − RTT/2 − interpolation delay). Без неї доводиться цілитись із випередженням.
