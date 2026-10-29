@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["**/node_modules/**", "**/dist/**", "server/logs/**", "coverage/**", "playwright-report/**", "test-results/**", "eslint.config.js"],
+    ignores: ["**/node_modules/**", "**/dist/**", "server/logs/**", "coverage/**", "playwright-report/**", "test-results/**", "eslint.config.js", "client/public/**"],
   },
   // Type-checked rules read the TypeScript types, so they catch floating
   // promises and values that are secretly `any` (JSON, catch, fetch...).

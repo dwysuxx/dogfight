@@ -1,0 +1,26 @@
+# Only what the Dockerfile copies matters; everything else is kept out of the
+# build context so it uploads fast and secrets cannot leak into a layer.
+**/node_modules
+.git
+.github
+.env
+.env.*
+!.env.example
+client/dist
+server/logs
+server/docs
+server/test
+shared/test
+client/test
+client/docs
+bench
+e2e
+coverage
+test-results
+playwright-report
+*.md
+*.log
+*.tmp
+Dockerfile
+compose.yaml
+fly.toml

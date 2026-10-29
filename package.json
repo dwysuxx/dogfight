@@ -1,7 +1,7 @@
 {
   "name": "dogfight",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "workspaces": [
     "shared",
@@ -27,7 +27,9 @@
     "e2e": "playwright test",
     "bench:frame": "node bench/frame-bench.ts",
     "bench:load": "node bench/load-test.ts && node bench/load-test.ts --rooms && node bench/chart.ts",
-    "bench:worker": "node bench/worker-experiment.ts"
+    "bench:worker": "node bench/worker-experiment.ts",
+    "docker:build": "docker build -t dogfight:local --build-arg APP_VERSION=local .",
+    "docker:up": "docker compose up --build"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

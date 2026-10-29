@@ -52,7 +52,9 @@ export class Lobby {
   constructor({
     endpoint = "/api/rooms",
     timeoutMs = 5000,
-    fetchImpl = fetch,
+    // Not `fetch` itself: stored on the instance, `this.fetchImpl(...)` would
+    // call it with `this === lobby` and the browser throws "Illegal invocation".
+    fetchImpl = (input, init) => fetch(input, init),
   }: { endpoint?: string; timeoutMs?: number; fetchImpl?: FetchLike } = {}) {
     this.endpoint = endpoint;
     this.timeoutMs = timeoutMs;

@@ -1,0 +1,41 @@
+# Fly.io app: one machine in Warsaw (closest Fly region to Ukraine).
+# Create once:  fly apps create <name>   and put <name> below and in the
+#               FLY_APP repository variable; FLY_API_TOKEN goes in secrets.
+app = "dogfight-dwysuxx"
+primary_region = "waw"
+kill_signal = "SIGTERM"
+kill_timeout = 10
+
+[env]
+  HOST = "0.0.0.0"
+  PORT = "8080"
+  # Fly's proxy terminates TLS and appends the client address to X-Forwarded-For.
+  TRUST_PROXY = "true"
+  LOG_LEVEL = "info"
+  MAX_CONNECTIONS_PER_IP = "8"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # WebSocket matches live in this process's memory: a stopped machine is a
+  # dropped match, so it never scales to zero, and there is exactly one.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 600
+    hard_limit = 900
+
+  # Readiness: while draining on deploy, /ready is 503 and Fly stops routing here.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/ready"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

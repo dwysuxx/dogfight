@@ -55,7 +55,17 @@ async function startServer(logDir: string, cpuProfDir: string | null): Promise<C
   const args = [...(cpuProfDir ? ["--cpu-prof", `--cpu-prof-dir=${cpuProfDir}`] : []), "server/src/index.ts"];
   const child = spawn(process.execPath, args, {
     cwd: ROOT,
-    env: { ...process.env, PORT: String(PORT), LOG_DIR: logDir, MAX_PLAYERS_PER_ROOM: "255", MAX_MESSAGES_PER_SECOND: "120" },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      LOG_DIR: logDir,
+      LOG_LEVEL: "warn",
+      MAX_PLAYERS_PER_ROOM: "255",
+      MAX_MESSAGES_PER_SECOND: "120",
+      // Every simulated pilot connects from 127.0.0.1.
+      MAX_CONNECTIONS_PER_IP: "100000",
+      MAX_CONNECTIONS: "100000",
+    },
     stdio: ["ignore", "ignore", "inherit", "ipc"],
   });
   for (let i = 0; i < 100; i++) {

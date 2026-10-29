@@ -1,0 +1,31 @@
+# Local production-like run: `docker compose up --build`, then
+# http://localhost:3000. Same image as the deploy, same env names.
+services:
+  dogfight:
+    build:
+      context: .
+      args:
+        APP_VERSION: local
+        GIT_SHA: local
+    image: dogfight:local
+    ports:
+      - "3000:8080"
+    environment:
+      LOG_LEVEL: info
+      # Set when the page is served from another origin (itch.io, a CDN).
+      ALLOWED_ORIGINS: ""
+      MAX_CONNECTIONS_PER_IP: "8"
+    volumes:
+      - match-logs:/app/server/logs
+    # Docker sends SIGTERM, waits this long, then SIGKILL; the server's own
+    # shutdown timeout (SHUTDOWN_TIMEOUT_MS, 8 s) fits inside it.
+    stop_grace_period: 10s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  match-logs:

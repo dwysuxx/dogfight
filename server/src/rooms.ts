@@ -44,18 +44,22 @@ export class Room extends EventEmitter<RoomEvents> {
   readonly maxPlayers: number;
   readonly players = new Map<string, RoomPlayer>();
   readonly createdAt = Date.now();
+  // The lobby's built-in rooms stay when empty; player-made rooms do not.
+  readonly persistent: boolean;
 
   constructor({
     id = randomUUID().slice(0, 8),
     name = "Orbit",
     arena = DEFAULT_ARENA,
     maxPlayers = 16,
-  }: { id?: string; name?: string; arena?: Arena; maxPlayers?: number } = {}) {
+    persistent = false,
+  }: { id?: string; name?: string; arena?: Arena; maxPlayers?: number; persistent?: boolean } = {}) {
     super();
     this.id = id;
     this.name = name;
     this.arena = arena;
     this.maxPlayers = maxPlayers;
+    this.persistent = persistent;
   }
 
   join(player: RoomPlayer): void {
@@ -114,38 +118,96 @@ export type RoomManagerEvents = {
 
 export class RoomManager extends EventEmitter<RoomManagerEvents> {
   #rooms = new Map<string, Room>();
+  #idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly maxRooms: number;
   readonly maxPlayersPerRoom: number;
+  readonly idleMs: number;
   readonly onRoom: ((room: Room) => void) | undefined;
 
   constructor({
     maxRooms = 100,
     maxPlayersPerRoom = 16,
+    idleMs = 0,
     onRoom,
-  }: { maxRooms?: number; maxPlayersPerRoom?: number; onRoom?: (room: Room) => void } = {}) {
+  }: { maxRooms?: number; maxPlayersPerRoom?: number; idleMs?: number; onRoom?: (room: Room) => void } = {}) {
     super();
     this.maxRooms = maxRooms;
     this.maxPlayersPerRoom = maxPlayersPerRoom;
+    this.idleMs = idleMs;
     this.onRoom = onRoom;
-    this.create({ id: "orbit", name: "Orbit", arena: { width: 960, height: 540, asteroids: 6 } });
-    this.create({ id: "deep-field", name: "Deep Field", arena: { width: 1280, height: 720, asteroids: 10 } });
+    this.create({ id: "orbit", name: "Orbit", arena: { width: 960, height: 540, asteroids: 6 }, persistent: true });
+    this.create({
+      id: "deep-field",
+      name: "Deep Field",
+      arena: { width: 1280, height: 720, asteroids: 10 },
+      persistent: true,
+    });
   }
 
-  create({ id = randomUUID().slice(0, 8), name, arena }: { id?: string; name: string; arena?: Arena | undefined }): Room {
+  create({
+    id = randomUUID().slice(0, 8),
+    name,
+    arena,
+    persistent = false,
+  }: {
+    id?: string;
+    name: string;
+    arena?: Arena | undefined;
+    persistent?: boolean;
+  }): Room {
     if (!ROOM_NAME.test(name.trim())) throw new TypeError("Room name must be 1–40 letters, numbers, spaces, _ or -");
     if (!ROOM_ID.test(id) || this.#rooms.has(id)) throw new TypeError("Room id is invalid or already in use");
     if (this.#rooms.size >= this.maxRooms) throw new RangeError("Server room limit reached");
 
-    const room = new Room({ id, name: name.trim(), arena: arena ?? DEFAULT_ARENA, maxPlayers: this.maxPlayersPerRoom });
-    room.on("error", (error) => this.emit("error", error));
-    room.once("empty", () => {
-      this.#rooms.delete(room.id);
-      this.emit("roomRemoved", room);
+    const room = new Room({
+      id,
+      name: name.trim(),
+      arena: arena ?? DEFAULT_ARENA,
+      maxPlayers: this.maxPlayersPerRoom,
+      persistent,
     });
+    room.on("error", (error) => this.emit("error", error));
+    if (!persistent) {
+      // An empty room lingers for idleMs (a creator who reloads the page finds
+      // it again), then goes; a room nobody ever joins goes the same way, so
+      // creating rooms in a loop cannot fill up maxRooms for good.
+      const onEmpty = () => this.#scheduleRemoval(room, remove);
+      const onJoin = () => this.#cancelRemoval(room.id);
+      const remove = () => {
+        room.off("empty", onEmpty);
+        room.off("join", onJoin);
+        this.#rooms.delete(room.id);
+        this.emit("roomRemoved", room);
+      };
+      room.on("empty", onEmpty);
+      room.on("join", onJoin);
+      if (this.idleMs > 0) this.#scheduleRemoval(room, remove);
+    }
     this.#rooms.set(room.id, room);
     this.onRoom?.(room);
     this.emit("roomCreated", room);
     return room;
+  }
+
+  #scheduleRemoval(room: Room, remove: () => void): void {
+    this.#cancelRemoval(room.id);
+    if (this.idleMs === 0) return remove();
+    const timer = setTimeout(() => {
+      this.#idleTimers.delete(room.id);
+      if (room.players.size === 0) remove();
+    }, this.idleMs);
+    timer.unref();
+    this.#idleTimers.set(room.id, timer);
+  }
+
+  #cancelRemoval(id: string): void {
+    clearTimeout(this.#idleTimers.get(id));
+    this.#idleTimers.delete(id);
+  }
+
+  dispose(): void {
+    for (const timer of this.#idleTimers.values()) clearTimeout(timer);
+    this.#idleTimers.clear();
   }
 
   get(id: string): Room | undefined {

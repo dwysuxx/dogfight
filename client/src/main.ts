@@ -320,6 +320,14 @@ chatForm.addEventListener("submit", (event) => {
   if (running.connection.sendChat(text)) chatInput.value = "";
 });
 
+// Installable PWA: the service worker only in the production build (in dev
+// it would serve cached modules over Vite's hot reload).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((error: unknown) => console.warn("Service worker:", error));
+  });
+}
+
 void lobby
   .refresh()
   .catch((error: unknown) => lobbyView.showError(`Could not load rooms: ${errorMessage(error)}`))
