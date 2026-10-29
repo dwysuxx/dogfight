@@ -3,7 +3,7 @@
 [![CI](https://github.com/dwysuxx/dogfight/actions/workflows/ci.yml/badge.svg)](https://github.com/dwysuxx/dogfight/actions/workflows/ci.yml)
 [![Deploy](https://github.com/dwysuxx/dogfight/actions/workflows/deploy.yml/badge.svg)](https://github.com/dwysuxx/dogfight/actions/workflows/deploy.yml)
 
-**▶ Грати: https://dogfight-dwysuxx.fly.dev** · встановлюється як застосунок (PWA) · до 16 пілотів у кімнаті
+**▶ Грати: https://dogfight-tnnhkw.fly.dev** · встановлюється як застосунок (PWA) · до 16 пілотів у кімнаті
 
 <!-- GIF / демо-відео: запишіть 20–30 с матчу двох віддалених гравців, збережіть як docs/demo.gif
      (або посилання на відео) і розкоментуйте рядок нижче. -->
@@ -109,9 +109,9 @@ docker compose up --build              # той самий образ, що в �
 
 ```bash
 fly auth login
-fly apps create dogfight-dwysuxx           # ім'я = app у fly.toml
+fly apps create dogfight-tnnhkw           # ім'я = app у fly.toml
 fly tokens create deploy -x 999999h        # → GitHub: Settings → Secrets → FLY_API_TOKEN
-# GitHub: Settings → Variables → FLY_APP = dogfight-dwysuxx
+# GitHub: Settings → Variables → FLY_APP = dogfight-tnnhkw
 fly deploy                                 # перший деплой вручну, далі лише теги:
 git tag v1.0.0 && git push origin v1.0.0
 ```
@@ -121,7 +121,7 @@ git tag v1.0.0 && git push origin v1.0.0
 | Що | Статус |
 |---|---|
 | Два віддалені гравці дограли матч | ☐ заповнити: хто, звідки, RTT з netgraph (<kbd>N</kbd>) |
-| Uptime-монітор | ☐ UptimeRobot / Better Stack: `GET https://dogfight-dwysuxx.fly.dev/health`, раз на хвилину, сповіщення в Telegram/e-mail |
+| Uptime-монітор | ☐ UptimeRobot / Better Stack: `GET https://dogfight-tnnhkw.fly.dev/health`, раз на хвилину, сповіщення в Telegram/e-mail |
 | PWA | ✅ `manifest.webmanifest`, іконки 192/512 + maskable, service worker (мережа першою для сторінки, кеш з фоновим оновленням для решти, `/api` і `/ws` не кешуються). e2e перевіряє маніфест і активний SW. ☐ Встановити з Chrome на телефоні й ПК |
 | README, демо, тег | ✅ README; ☐ GIF/відео; ☐ `git tag lab-08 v1.0.0` |
 

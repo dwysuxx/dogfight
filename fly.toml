@@ -1,8 +1,8 @@
-# Fly.io app: one machine in Warsaw (closest Fly region to Ukraine).
+# Fly.io app: one machine in Amsterdam (picked by fly launch; waw is closer to Ukraine).
 # Create once:  fly apps create <name>   and put <name> below and in the
 #               FLY_APP repository variable; FLY_API_TOKEN goes in secrets.
-app = "dogfight-dwysuxx"
-primary_region = "waw"
+app = "dogfight-tnnhkw"
+primary_region = "ams"
 kill_signal = "SIGTERM"
 kill_timeout = 10
 
